@@ -1,2 +1,2 @@
 pub mod common;
-mod constriants;
+mod constraints;
