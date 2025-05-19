@@ -166,6 +166,7 @@ name = "arkworks-keccak"
 version = "0.1.0"
 dependencies = [
  "ark-bls12-381",
+ "ark-ff",
  "ark-r1cs-std",
  "ark-relations",
  "ark-std",
