@@ -22,10 +22,12 @@ const ROTR: [usize; 25] = [
 ];
 
 // xor_2
+// 
 fn xor_2<F: Field>(mut cs: ConstraintSystemRef<F>, a: &UInt64<F>, b: &UInt64<F>) -> Result<UInt64<F>, SynthesisError>
     {
-        // let xor_2 = UInt64::new_witness(ark_relations::ns!(cs, "xor_2"), || {Ok(a.xor(b))})?;
-        a.xor(b)
+        // TODO: implement xor for the UInt64 gadget
+        let xor_2 = UInt64::new_witness(ark_relations::ns!(cs, "xor_2"), || {Ok(a.xor(b))})?;
+        Ok(xor_2)
     }
 
 // xor_5
@@ -39,7 +41,7 @@ fn xor_5<T: ConstraintF>(
     ) -> Result<UInt64<T>, SynthesisError>
     {
         // a^b^c^d^e
-        // TODO: implement xor with the UInt64 gadget
+        // TODO: implement xor for the UInt64 gadget
         let ab = UInt64::new_witness(ark_relations::ns!(cs, "xor_5 first"), || {Ok(a.xor(b))})?;
         let abc = UInt64::new_witness(ark_relations::ns!(cs, "xor_5 second"), || {Ok(ab.xor(c))})?;
         let abcd = UInt64::new_witness(ark_relations::ns!(cs, "xor_5 third"), || {Ok(abc.xor(d))})?;
@@ -56,7 +58,7 @@ fn xor_not_and<T: ConstraintF>(
     ) -> Result<UInt64<T>, SynthesisError>
     {
         // a^((!b) & c)
-        let nb = b.not(); // TODO: UInt64 gadget for NOT, AND, XOR.
+        let nb = b.not(); // TODO: Implement NOT,AND,XOR methods for UInt64 gadget.
         let nbc = UInt64:new_witness(ark_relations::ns!(cs,"xor_not_and second"), || {Ok(nb.and(c))})?;
         let xor_not_and_result = UInt64::new_witness(ark_relations::ns!(cs, "xor_not_and third"), || {Ok(a.xor(nbc))})?;
         Ok(xor_not_and_result)
@@ -102,21 +104,48 @@ fn round_1600<T: ConstraintF>(mut cs: ConstraintSystemRef<T>, a: &[UInt64], rc: 
     // A'[x][y] = A[x][y] xor D[x]
     let mut a_new1 = Vec::new();
     for y in 0..5 {
-        for x in 0..5
+        for x in 0..5{
+            let cs = ark_relations::ns!(cs,format!("omega {},{}", x, y));
+            // TODO: implement xor for the UInt64 gadget
+            a_new1.push(xor_2(cs,&a[x + (y * 5usize)], &d[x])?);
+        }
     }
 
     // # \rho step
     // A'[x][y] = A[x][y] << ROTR[x][y]
-    
-
     // # /pi step
     // A'[y][2x + 3y] = A[x][y]
-
+    let mut b = a_new1.clone();
+    for y in 0..5 {
+        for x in 0..5 {
+            // TODO: implement rotl for UInt64
+            b[y + ((((2 * x) + (3 * y)) % 5) * 5usize)] = a_new1[x + (y * 5usize)].rotl(ROTR[x + (y * 5usize)]);
+        }
+    }
+    
     // # \chi step
     // A'[x][y][z] = A[x][y][z] xor ((A[(x+1) mod 5][y][z] xor 1) AND A[(x+2) mod 5][y][z])
+    let mut a_new2 = Vec::new();
+    for y in 0..5 {
+        for x in 0..5 {
+            let cs = ark_relations::ns!(cs,format!("omega {},{}", x, y));
+
+            a_new2.push(xor_not_and(
+                cs,
+                &b[x + (y * 5usize)],
+                &b[((x + 1usize) % 5usize) + (y * 5usize)],
+                &b[((x + 2usize) % 5usize) + (y * 5usize)],
+            )?);
+        }
+    }
 
     // # \iota step
     // A'[0][0] = A[0][0] xor Round_Constant_i
+    // TODO: add constant creation in the UInt64 gadget
+    let rc = UInt64::constant(rc);
+    a_new2[0] = UInt64::new_witness(ark_relations::ns!(cs, "xor_2"), || {Ok(a_new2[0].xor(&rc))})?;
+
+    Ok(a_new2);
 }
 
 // keccak_f_1600
