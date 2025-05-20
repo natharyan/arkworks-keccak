@@ -1,7 +1,7 @@
 use crate::common::*;
 use ark_bls12_381::Fr;
 use ark_r1cs_std::{prelude::*, uint64::UInt64, boolean::Boolean};
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Namespace};
 use ark_std::vec::Vec;
 use ark_ff::Field;
 
@@ -22,14 +22,14 @@ const ROTR: [usize; 25] = [
 ];
 
 // xor_2
-fn xor_2<F: Field>(mut cs: ConstraintSystemRef<F>, a: &UInt64<F>, b: &UInt64<F>) -> Result<UInt64<F>, SynthesisError>
+fn xor_2<F: Field>(cs: Namespace<F>, a: &UInt64<F>, b: &UInt64<F>) -> Result<UInt64<F>, SynthesisError>
     {
         a.xor(&b)
     }
 
 // xor_5
 fn xor_5<F: Field>(
-    mut cs: ConstraintSystemRef<F>,
+    cs: Namespace<F>,
     a: &UInt64<F>,
     b: &UInt64<F>,
     c: &UInt64<F>,
@@ -47,31 +47,22 @@ fn xor_5<F: Field>(
 
 // xor_not_and
 fn xor_not_and<F: Field>(
-        mut cs: ConstraintSystemRef<F>,
+        cs: Namespace<F>,
         a: &UInt64<F>,
         b: &UInt64<F>,
         c: &UInt64<F>,
     ) -> Result<UInt64<F>, SynthesisError>
     {
         // a^((!b) & c)
-        let abits = a.to_bits_le()?;
-        let bbits = b.to_bits_le()?;
-        let cbits = c.to_bits_le()?;
-        
-        let mut resultvec = Vec::with_capacity(64 as usize);
-        for i in 0..64 {
-            let neqb = bbits[i].not();
-            let nbc = Boolean::and(neqb,cbits[i])?;
-            let resultbit = Boolean::xor(abits[i],nbc)?;
-            resultvec.push(resultbit);
-        }
-        UInt64::from_bits_le(&resultvec)
+        let neqb = not(&b)?;
+        let nbc = and(&neqb,&c)?;
+        a.xor(&nbc)
     }
 
 // round_1600: \theta, \rho, \pi, \chi, \iota mappings
-fn round_1600<F: Field>(mut cs: ConstraintSystemRef<F>, a: &[UInt64<F>], rc: u64) -> Result<Vec<UInt64<F>>, SynthesisError>
+fn round_1600<F: Field>(cs: ConstraintSystemRef<F>, a: &[UInt64<F>], rc: u64) -> Result<Vec<UInt64<F>>, SynthesisError>
 {
-    assert_eq!(a.len(), 25); 
+    assert_eq!(a.len(), 25);
 
     // # \theta step
     // A'[x][y][z] = A[x][y][z] xor CP[(x+1) mod 5][(z-1) mod 64] xor CP[(x-1) mod 5][z]
@@ -79,9 +70,8 @@ fn round_1600<F: Field>(mut cs: ConstraintSystemRef<F>, a: &[UInt64<F>], rc: u64
     // column parity vector: CP[x] = A[x,0] xor A[x,1] xor A[x,2] xor A[x,3] xor A[x,4], for x in 0...4 
     let mut cp = Vec::new();
     for x in 0..5{
-        let cs = ark_relations::ns!(cs,"omega c ").namespace(|| format!("{}",x));
         cp.push(xor_5(
-            cs,
+            ark_relations::ns!(cs, "xor_5 omega_cp"),
             &a[x],
             &a[x + 5usize],
             &a[x + 10usize],
@@ -94,22 +84,18 @@ fn round_1600<F: Field>(mut cs: ConstraintSystemRef<F>, a: &[UInt64<F>], rc: u64
     // => D[x] = rot(CP[x+1],1) xor C[(x-1) mod 5]
     let mut d = Vec::new();
     for x in 0..5 {
-        let cs = ark_relations::ns!(cs,"omega d ").namespace(|| format!("{}",x));
-        
         d.push(xor_2(
-            cs,
-            &cp[(x + 1usize) % 5usize].rotl(1), // TODO: implement rotl method for UInt64 gadget.
+            ark_relations::ns!(cs, "xor_2 omega_d"),
+            &rotl(&cp[(x + 1usize) % 5usize],1)?,
             &cp[(x + 4usize) % 5usize],
-        ))
+        )?)
     }
 
     // A'[x][y] = A[x][y] xor D[x]
     let mut a_new1 = Vec::new();
     for y in 0..5 {
         for x in 0..5{
-            let cs = ark_relations::ns!(cs,"omega ").namespace(|| format!("{},{}", x, y));
-            // TODO: implement xor for the UInt64 gadget
-            a_new1.push(xor_2(cs,&a[x + (y * 5usize)], &d[x])?);
+            a_new1.push(xor_2(ark_relations::ns!(cs, "xor_2 omega_a_new1"),&a[x + (y * 5usize)], &d[x])?);
         }
     }
 
@@ -120,8 +106,7 @@ fn round_1600<F: Field>(mut cs: ConstraintSystemRef<F>, a: &[UInt64<F>], rc: u64
     let mut b = a_new1.clone();
     for y in 0..5 {
         for x in 0..5 {
-            // TODO: implement rotl for UInt64
-            b[y + ((((2 * x) + (3 * y)) % 5) * 5usize)] = a_new1[x + (y * 5usize)].rotl(ROTR[x + (y * 5usize)]);
+            b[y + ((((2 * x) + (3 * y)) % 5) * 5usize)] = rotl(&a_new1[x + (y * 5usize)],ROTR[x + (y * 5usize)])?;
         }
     }
     
@@ -130,10 +115,8 @@ fn round_1600<F: Field>(mut cs: ConstraintSystemRef<F>, a: &[UInt64<F>], rc: u64
     let mut a_new2 = Vec::new();
     for y in 0..5 {
         for x in 0..5 {
-            let cs = ark_relations::ns!(cs,"omega ").namespace(|| format!("{},{}", x, y));
-
             a_new2.push(xor_not_and(
-                cs,
+                ark_relations::ns!(cs, "xor_not_and omega_a_new2"),
                 &b[x + (y * 5usize)],
                 &b[((x + 1usize) % 5usize) + (y * 5usize)],
                 &b[((x + 2usize) % 5usize) + (y * 5usize)],
@@ -143,11 +126,9 @@ fn round_1600<F: Field>(mut cs: ConstraintSystemRef<F>, a: &[UInt64<F>], rc: u64
 
     // # \iota step
     // A'[0][0] = A[0][0] xor Round_Constant_i
-    // TODO: add constant creation in the UInt64 gadget
     let rc = UInt64::constant(rc);
-    a_new2[0] = UInt64::new_witness(ark_relations::ns!(cs, "xor_2"), || {a_new2[0].xor(&rc)})?;
-
-    Ok(a_new2);
+    a_new2[0] = a_new2[0].xor(&rc)?;
+    Ok(a_new2)
 }
 
 // keccak_f_1600
