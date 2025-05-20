@@ -132,7 +132,23 @@ fn round_1600<F: Field>(cs: ConstraintSystemRef<F>, a: &[UInt64<F>], rc: u64) ->
 }
 
 // keccak_f_1600
+fn keccak_f_1600<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> Result<Vec<Boolean<F>>, SynthesisError>
+{
+    // b bit string as input
+    assert_eq!(input.len(),1600);
 
+    // create flattened state array
+    let mut a = input.chunks(64).map(|chunk| UInt64::from_bits_le(chunk)).collect::<Vec<UInt64<F>>>(); // (x,y) -> (i%5,i/5)
+
+    for (i, round_constant) in ROUND_CONSTANTS.iter().enumerate(){
+        // TODO: add csref with new namespace. "keccack round {}", i
+        a = round_1600(cs.clone(),&a,*round_constant)?;
+    }
+
+    let a_new = a.into_iter().flat_map(|e| e.to_bits_le()).collect();
+
+    Ok(a_new)
+}
 // keccak256
 
 
