@@ -5,7 +5,7 @@ use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisE
 use ark_std::vec::Vec;
 use ark_ff::Field;
 
-// round constants for the \iota mapping
+// round constants for the \iota mapping, n_r = 24
 #[rustfmt::skip]
 const ROUND_CONSTANTS: [u64; 24] = [
     0x0000000000000001, 0x0000000000008082, 0x800000000000808a, 0x8000000080008000,
@@ -150,6 +150,50 @@ fn keccak_f_1600<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> 
     Ok(a_new)
 }
 // keccak256
+pub fn keccak256<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> Result<Vec<Boolean<F>>, SynthesisError>
+{
+    assert_eq!(input.len(), 512);
 
+    let mut m = Vec::new();
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..1600 {
+        if i < 512 {
+            m.push(input[i].clone());
+        } else {
+            m.push(Boolean::Constant(false));
+        }
+    }
+
+    // # Padding
+    // d = 2^|Mbits| + sum for i=0..|Mbits|-1 of 2^i*Mbits[i]
+    // P = Mbytes || d || 0x00 || … || 0x00
+    // P = P xor (0x00 || … || 0x00 || 0x80)
+    //0x0100 ... 0080
+    m[512] = Boolean::Constant(true);
+    m[1087] = Boolean::Constant(true); // r = 1088, r+c = 1600
+
+    // # Initialization
+    // S[x,y] = 0,                               for (x,y) in (0…4,0…4)
+
+    // # Absorbing phase
+    // for each block Pi in P
+    //   S[x,y] = S[x,y] xor Pi[x+5*y],          for (x,y) such that x+5*y < r/w
+    //   S = Keccak-f[r+c](S)
+
+    let m = keccak_f_1600(cs, &m)?; // m = r in keccak256, so a single a is produced after padding
+
+    //# Squeezing phase
+    // Z = empty string
+    let mut z = Vec::new();
+
+    // while output is requested
+    // Z = Z || S[x,y]
+    // S = Keccak-f[r + c](S)
+    for item in m[..256].iter(){ // n = 0.r + 256
+        z.push(item.clone());
+    }
+
+    Ok(z)
+}
 
 
