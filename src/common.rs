@@ -1,10 +1,7 @@
 use ark_r1cs_std::boolean::Boolean;
 use ark_r1cs_std::uint64::UInt64;
-use ark_relations::r1cs::{SynthesisError, ConstraintSystemRef};
+use ark_relations::r1cs::{SynthesisError};
 use ark_ff::Field;
-
-pub type ConstraintF = ark_bls12_381::Fq;
-
 
 // functions for UInt64
 pub fn not<F: Field>(x: &UInt64<F>) -> Result<UInt64<F>, SynthesisError>{

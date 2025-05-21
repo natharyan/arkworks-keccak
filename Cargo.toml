@@ -9,4 +9,5 @@ ark-ff = "0.4"
 ark-r1cs-std = "0.4"
 ark-relations = "0.4"
 ark-std = "0.4"
+tiny-keccak = { version = "2.0.0", features = ["keccak"] }
 

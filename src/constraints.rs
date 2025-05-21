@@ -1,9 +1,18 @@
 use crate::common::*;
-use ark_bls12_381::Fr;
 use ark_r1cs_std::{prelude::*, uint64::UInt64, boolean::Boolean};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Namespace};
 use ark_std::vec::Vec;
 use ark_ff::Field;
+use tiny_keccak::{Keccak,Hasher};
+
+fn keccak256(input: &[u8]) -> [u8;32]
+{
+    let mut hash_func = Keccak::v256();
+    let mut output = [0u8;32];
+    hash_func.update(input);
+    hash_func.finalize(&mut output);
+    output
+}
 
 // round constants for the \iota mapping, n_r = 24
 #[rustfmt::skip]
@@ -150,7 +159,7 @@ fn keccak_f_1600<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> 
     Ok(a_new)
 }
 // keccak256
-pub fn keccak256<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> Result<Vec<Boolean<F>>, SynthesisError>
+pub fn keccak256_gadget<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> Result<Vec<Boolean<F>>, SynthesisError>
 {
     assert_eq!(input.len(), 512);
 
@@ -180,7 +189,7 @@ pub fn keccak256<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> 
     //   S[x,y] = S[x,y] xor Pi[x+5*y],          for (x,y) such that x+5*y < r/w
     //   S = Keccak-f[r+c](S)
 
-    let m = keccak_f_1600(cs, &m)?; // m = r in keccak256, so a single a is produced after padding
+    let state = keccak_f_1600(cs, &m)?; // m = r in keccak256, so a single block (m_1) is produced after padding
 
     //# Squeezing phase
     // Z = empty string
@@ -189,11 +198,33 @@ pub fn keccak256<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> 
     // while output is requested
     // Z = Z || S[x,y]
     // S = Keccak-f[r + c](S)
-    for item in m[..256].iter(){ // n = 0.r + 256
+    for item in state[..256].iter(){ // n = 0.r + 256
         z.push(item.clone());
     }
 
     Ok(z)
 }
 
+pub struct KeccakCircuit<F: Field> {
+    pub input: Vec<Boolean<F>>, // 512
+    pub expected: Vec<Boolean<F>> // 256
+}
 
+impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F>{
+    fn generate_constraints(self, cs:ConstraintSystemRef<F>) -> Result<(), SynthesisError>
+    {
+        
+        let input: Vec<Boolean<F>> = self.input.iter().map(|bit| {Boolean::new_input(ark_relations::ns!(cs,"input bit"), || Ok(bit.value().unwrap()))}).collect::<Result<Vec<Boolean<F>>, SynthesisError>>()?;
+        let expected: Vec<Boolean<F>> = self.expected.iter().map(|bit| {Boolean::new_input(ark_relations::ns!(cs,"expected output bit"), || Ok(bit.value().unwrap()))}).collect::<Result<Vec<Boolean<F>>, SynthesisError>>()?;
+        let output = keccak256_gadget(cs.clone(),&input)?;
+        for (o,e) in output.iter().zip(expected.iter()){
+            o.enforce_equal(e)?;
+        }
+        Ok(())
+    }
+}
+
+// #[test]
+// fn keccak_constraints_test(){
+
+// }
