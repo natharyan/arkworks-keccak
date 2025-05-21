@@ -4,6 +4,7 @@ use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisE
 use ark_std::vec::Vec;
 use ark_ff::Field;
 use tiny_keccak::{Keccak,Hasher};
+use ark_std::test_rng;
 
 fn keccak256(input: &[u8]) -> [u8;32]
 {
@@ -224,7 +225,39 @@ impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F>{
     }
 }
 
-// #[test]
-// fn keccak_constraints_test(){
+#[test]
+fn keccak_constraints_test(){
+    use ark_relations::r1cs::{ConstraintLayer, ConstraintSystem, TracingMode};
+    use tracing_subscriber::layer::SubscriberExt;
 
-// }
+    let mut rng = ark_std::test_rng();
+    let input_bytes: Vec<u8> = (0..64).map(|byte| rng.r#gen()).collect(); // 64 bytes = 512 bits.
+    let expected_output = keccak256(&input);
+    
+    let input: Vec<Boolean<F>> = input_bytes.iter().flat_map(|byte| (0..8).map(move |i| Boolean::constant((byte >> i) & 1 == 1))).collect(); // flat_map(..) converts each byte to its binary representation. (byte >> i) & 1 == 1 extracts the LSB bit and assigns it as true or false.
+    let expected_output: Vec<Boolean<F>> = expected_output.iter().flat_map(|byte| (0..8).map(move |i| Boolean::constant((byte >> i) & 1 == 1))).collect();
+    let circuit = Keccak256Circuit {
+        // public inputs
+        input,
+        expected_output,
+    };
+
+    // First, some boilerplate that helps with debugging
+    let mut layer = ConstraintLayer::default();
+    layer.mode = TracingMode::OnlyConstraints;
+    let subscriber = tracing_subscriber::Registry::default().with(layer);
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // Next, let's make the circuit!
+    let cs = ConstraintSystem::new_ref();
+    circuit.generate_constraints(cs.clone()).unwrap();
+
+    // Let's check whether the constraint system is satisfied
+    let is_satisfied = cs.is_satisfied().unwrap();
+    if (!is_satisfied){
+        // If it isn't, find out the offending constraint.
+        println!("{:?}", cs.which_is_unsatisfied());
+    }
+
+    assert!(is_satisfied);
+}
