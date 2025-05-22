@@ -3,16 +3,7 @@ use ark_r1cs_std::{prelude::*, uint64::UInt64, boolean::Boolean};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Namespace};
 use ark_std::vec::Vec;
 use ark_ff::Field;
-use tiny_keccak::{Keccak,Hasher};
-
-fn keccak256(input: &[u8]) -> [u8;32]
-{
-    let mut hash_func = Keccak::v256();
-    let mut output = [0u8;32];
-    hash_func.update(input);
-    hash_func.finalize(&mut output);
-    output
-}
+use proptest::proptest;
 
 // round constants for the \iota mapping, n_r = 24
 #[rustfmt::skip]
@@ -31,14 +22,14 @@ const ROTR: [usize; 25] = [
 ];
 
 // xor_2
-fn xor_2<F: Field>(cs: Namespace<F>, a: &UInt64<F>, b: &UInt64<F>) -> Result<UInt64<F>, SynthesisError>
+fn xor_2<F: Field>(_cs: Namespace<F>, a: &UInt64<F>, b: &UInt64<F>) -> Result<UInt64<F>, SynthesisError>
     {
         a.xor(&b)
     }
 
 // xor_5
 fn xor_5<F: Field>(
-    cs: Namespace<F>,
+    _cs: Namespace<F>,
     a: &UInt64<F>,
     b: &UInt64<F>,
     c: &UInt64<F>,
@@ -56,7 +47,7 @@ fn xor_5<F: Field>(
 
 // xor_not_and
 fn xor_not_and<F: Field>(
-        cs: Namespace<F>,
+        _cs: Namespace<F>,
         a: &UInt64<F>,
         b: &UInt64<F>,
         c: &UInt64<F>,
@@ -149,7 +140,7 @@ fn keccak_f_1600<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> 
     // create flattened state array
     let mut a = input.chunks(64).map(|chunk| UInt64::from_bits_le(chunk)).collect::<Vec<UInt64<F>>>(); // (x,y) -> (i%5,i/5)
 
-    for (i, round_constant) in ROUND_CONSTANTS.iter().enumerate(){
+    for (_i, round_constant) in ROUND_CONSTANTS.iter().enumerate(){
         // TODO: add csref with new namespace. "keccack round {}", i
         a = round_1600(cs.clone(),&a,*round_constant)?;
     }
@@ -162,7 +153,6 @@ fn keccak_f_1600<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> 
 pub fn keccak256_gadget<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F>]) -> Result<Vec<Boolean<F>>, SynthesisError>
 {
     assert_eq!(input.len(), 512);
-
     let mut m = Vec::new();
     #[allow(clippy::needless_range_loop)]
     for i in 0..1600 {
@@ -206,60 +196,63 @@ pub fn keccak256_gadget<F: Field>(cs: ConstraintSystemRef<F>, input: &[Boolean<F
 }
 
 pub struct KeccakCircuit<F: Field> {
-    pub input: Vec<Boolean<F>>, // 512
-    pub expected: Vec<Boolean<F>> // 256
+    pub preimage: Vec<Boolean<F>>, // 512 bools
+    pub expected: [u8;32] // 32 bytes == 256 bits
 }
 
 impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F>{
     fn generate_constraints(self, cs:ConstraintSystemRef<F>) -> Result<(), SynthesisError>
     {
-        
-        let input: Vec<Boolean<F>> = self.input.iter().map(|bit| {Boolean::new_input(ark_relations::ns!(cs,"input bit"), || Ok(bit.value().unwrap()))}).collect::<Result<Vec<Boolean<F>>, SynthesisError>>()?;
-        let expected: Vec<Boolean<F>> = self.expected.iter().map(|bit| {Boolean::new_input(ark_relations::ns!(cs,"expected output bit"), || Ok(bit.value().unwrap()))}).collect::<Result<Vec<Boolean<F>>, SynthesisError>>()?;
-        let output = keccak256_gadget(cs.clone(),&input)?;
-        for (o,e) in output.iter().zip(expected.iter()){
+        let preimage = vec_to_public_input(cs.clone(), "preimage", self.preimage)?;
+        let expected = bytes_to_bitvec::<F>(&self.expected);
+        let expected = vec_to_public_input(cs.clone(), "expected", expected)?;
+        let result = keccak256_gadget(cs.clone(),&preimage)?;
+
+        for (o, e) in result.iter().zip(expected.iter()) {
             o.enforce_equal(e)?;
         }
+
         Ok(())
     }
 }
 
-#[test]
-fn keccak_constraints_test(){
-    use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
-    use tracing_subscriber::Registry;
-    use tracing_subscriber::layer::SubscriberExt;
-    use ark_std::rand::Rng;
-    use ark_bls12_381::Fr;
+proptest! {
+    #[test]
+    fn test_keccak256(preimage in "[0-9a-f]{128}"){
+        use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
+        use tracing_subscriber::Registry;
+        use tracing_subscriber::layer::SubscriberExt;
+        use ark_bls12_381::Fr;
 
-    let mut rng = ark_std::test_rng();
-    let input_bytes: Vec<u8> = (0..64).map(|_byte| rng.r#gen()).collect(); // 64 bytes = 512 bits.
-    let expected = keccak256(&input_bytes);
-    
-    let input: Vec<Boolean<Fr>> = input_bytes.iter().flat_map(|byte| (0..8).map(move |i| Boolean::constant((byte >> i) & 1 == 1))).collect(); // flat_map(..) converts each byte to its binary representation. (byte >> i) & 1 == 1 extracts the LSB bit and assigns it as true or false.
-    let expected: Vec<Boolean<Fr>> = expected.iter().flat_map(|byte| (0..8).map(move |i| Boolean::constant((byte >> i) & 1 == 1))).collect();
-    let circuit = KeccakCircuit {
-        // public inputs
-        input,
-        expected,
-    };
+        let preimage = hex::decode(preimage).unwrap();
+        let expected = keccak256(&preimage);
 
-    // First, some boilerplate that helps with debugging
-    let mut layer = ConstraintLayer::default();
-    layer.mode = TracingMode::OnlyConstraints;
-    let subscriber = Registry::default().with(layer);
-    let _guard = tracing::subscriber::set_default(subscriber);
+        let preimage = bytes_to_bitvec::<Fr>(&preimage);
+        
+        let circuit = KeccakCircuit {
+            // public inputs
+            preimage: preimage.clone(),
+            expected: expected.clone(),
+        };
 
-    // Next, let's make the circuit!
-    let cs = ConstraintSystem::new_ref();
-    circuit.generate_constraints(cs.clone()).unwrap();
+        // some boilerplate that helps with debugging
+        let mut layer = ConstraintLayer::default();
+        layer.mode = TracingMode::OnlyConstraints;
+        let subscriber = Registry::default().with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
 
-    // Let's check whether the constraint system is satisfied
-    let is_satisfied = cs.is_satisfied().unwrap();
-    if !is_satisfied{
-        // If it isn't, find out the offending constraint.
-        println!("{:?}", cs.which_is_unsatisfied());
+        // next, let's make the circuit
+        let cs = ConstraintSystem::new_ref();
+        circuit.generate_constraints(cs.clone()).unwrap();
+
+        // let's check whether the constraint system is satisfied
+        let is_satisfied = cs.is_satisfied().unwrap();
+        if !is_satisfied{
+            // if it isn't, find out the offending constraint.
+            println!("Unsatisfied constraint: {:?}\n", cs.which_is_unsatisfied());
+        }
+        assert!(is_satisfied);
     }
-
-    assert!(is_satisfied);
 }
+
+// TODO: add unique strings for namespaces created in for loops.
