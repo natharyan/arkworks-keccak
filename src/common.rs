@@ -1,11 +1,11 @@
+use ark_ff::Field;
 use ark_r1cs_std::boolean::Boolean;
 use ark_r1cs_std::uint64::UInt64;
-use ark_relations::r1cs::{SynthesisError,ConstraintSystemRef};
-use ark_ff::Field;
-use tiny_keccak::{Keccak,Hasher};
+use ark_r1cs_std::{R1CSVar, alloc::AllocVar};
+use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 use bitvec::order::Lsb0;
 use bitvec::prelude::BitVec;
-use ark_r1cs_std::{R1CSVar,alloc::AllocVar};
+use tiny_keccak::{Hasher, Keccak};
 
 pub fn bytes_to_bitvec<F: Field>(bytes: &[u8]) -> Vec<Boolean<F>> {
     let bits = BitVec::<u8, Lsb0>::from_slice(bytes);
@@ -13,7 +13,7 @@ pub fn bytes_to_bitvec<F: Field>(bytes: &[u8]) -> Vec<Boolean<F>> {
     bits
 }
 
-pub fn bits_to_bytevec<F:Field>(bits: &[Boolean<F>]) -> Vec<u8> {
+pub fn bits_to_bytevec<F: Field>(bits: &[Boolean<F>]) -> Vec<u8> {
     let result: Vec<bool> = bits.iter().map(|b| b.value().unwrap()).collect();
     let mut bv = BitVec::<u8, Lsb0>::new();
     for bit in result {
@@ -42,39 +42,39 @@ pub fn vec_to_public_input<F: Field>(
 }
 
 // functions for UInt64
-pub fn not<F: Field>(x: &UInt64<F>) -> Result<UInt64<F>, SynthesisError>{
+pub fn not<F: Field>(x: &UInt64<F>) -> Result<UInt64<F>, SynthesisError> {
     let xbits = x.to_bits_le();
     let mut notx = Vec::with_capacity(64);
-    for i in 0..64{
+    for i in 0..64 {
         notx.push(xbits[i].not());
     }
     Ok(UInt64::from_bits_le(&notx))
 }
 
-pub fn and<F: Field>(x: &UInt64<F>, y: &UInt64<F>) -> Result<UInt64<F>, SynthesisError>{
+pub fn and<F: Field>(x: &UInt64<F>, y: &UInt64<F>) -> Result<UInt64<F>, SynthesisError> {
     let xbits = x.to_bits_le();
     let ybits = y.to_bits_le();
     let mut x_and_y = Vec::with_capacity(64);
-    for i in 0..64{
-        x_and_y.push(Boolean::and(&xbits[i],&ybits[i])?);
+    for i in 0..64 {
+        x_and_y.push(Boolean::and(&xbits[i], &ybits[i])?);
     }
     Ok(UInt64::from_bits_le(&x_and_y))
 }
 
-pub fn rotl<F: Field>(x: &UInt64<F>, shift: usize) -> Result<UInt64<F>, SynthesisError>{
-    let shift = (64 - shift)%64;
+pub fn rotl<F: Field>(x: &UInt64<F>, shift: usize) -> Result<UInt64<F>, SynthesisError> {
+    // ROTL = 64 - ROTR
+    let shift = (64 - shift) % 64;
     let bitvec = x.to_bits_le();
     let mut rotatedvec = Vec::with_capacity(64);
-    for i in 0..64{
+    for i in 0..64 {
         rotatedvec.push(bitvec[(i + shift) % 64].clone());
     }
     Ok(UInt64::from_bits_le(&rotatedvec))
 }
 
-pub fn keccak256(input: &[u8]) -> [u8;32]
-{
+pub fn keccak256(input: &[u8]) -> [u8; 32] {
     let mut hash_func = Keccak::v256();
-    let mut output = [0u8;32];
+    let mut output = [0u8; 32];
     hash_func.update(input);
     hash_func.finalize(&mut output);
     output
