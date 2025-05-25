@@ -1,9 +1,8 @@
-use crate::*;
+use crate::util::{and, bytes_to_bitvec, not, rotl, vec_to_public_input};
 use ark_ff::Field;
 use ark_r1cs_std::{boolean::Boolean, prelude::*, uint64::UInt64};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_std::vec::Vec;
-use proptest::proptest;
 
 // round constants for the \iota mapping, n_r = 24
 #[rustfmt::skip]
@@ -218,41 +217,49 @@ impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F> {
     }
 }
 
-proptest! {
-    #[test]
-    fn test_keccak256(preimage in "[0-9a-f]{128}"){
-        use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
-        use tracing_subscriber::Registry;
-        use tracing_subscriber::layer::SubscriberExt;
-        use ark_bls12_381::Fr;
+#[cfg(test)]
+mod test {
 
-        let preimage = hex::decode(preimage).unwrap();
-        let expected = keccak256(&preimage);
+    use super::*;
+    use crate::util::keccak256;
+    use proptest::proptest;
 
-        let preimage = bytes_to_bitvec::<Fr>(&preimage);
+    proptest! {
+        #[test]
+        fn test_keccak256(preimage in "[0-9a-f]{128}"){
+            use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
+            use tracing_subscriber::Registry;
+            use tracing_subscriber::layer::SubscriberExt;
+            use ark_bls12_381::Fr;
 
-        let circuit = KeccakCircuit {
-            // public inputs
-            preimage: preimage.clone(),
-            expected: expected.clone(),
-        };
+            let preimage = hex::decode(preimage).unwrap();
+            let expected = keccak256(&preimage);
 
-        // some boilerplate that helps with debugging
-        let mut layer = ConstraintLayer::default();
-        layer.mode = TracingMode::OnlyConstraints;
-        let subscriber = Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+            let preimage = bytes_to_bitvec::<Fr>(&preimage);
 
-        // next, let's make the circuit
-        let cs = ConstraintSystem::new_ref();
-        circuit.generate_constraints(cs.clone()).unwrap();
+            let circuit = KeccakCircuit {
+                // public inputs
+                preimage: preimage.clone(),
+                expected: expected.clone(),
+            };
 
-        // let's check whether the constraint system is satisfied
-        let is_satisfied = cs.is_satisfied().unwrap();
-        if !is_satisfied{
-            // if it isn't, find out the offending constraint.
-            println!("Unsatisfied constraint: {:?}\n", cs.which_is_unsatisfied());
+            // some boilerplate that helps with debugging
+            let mut layer = ConstraintLayer::default();
+            layer.mode = TracingMode::OnlyConstraints;
+            let subscriber = Registry::default().with(layer);
+            let _guard = tracing::subscriber::set_default(subscriber);
+
+            // next, let's make the circuit
+            let cs = ConstraintSystem::new_ref();
+            circuit.generate_constraints(cs.clone()).unwrap();
+
+            // let's check whether the constraint system is satisfied
+            let is_satisfied = cs.is_satisfied().unwrap();
+            if !is_satisfied{
+                // if it isn't, find out the offending constraint.
+                println!("Unsatisfied constraint: {:?}\n", cs.which_is_unsatisfied());
+            }
+            assert!(is_satisfied);
         }
-        assert!(is_satisfied);
     }
 }
