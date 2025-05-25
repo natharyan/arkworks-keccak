@@ -1,3 +1,5 @@
+mod constraints;
+
 use ark_ff::Field;
 use ark_r1cs_std::boolean::Boolean;
 use ark_r1cs_std::uint64::UInt64;

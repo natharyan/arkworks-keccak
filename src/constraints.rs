@@ -1,4 +1,4 @@
-use crate::lib::*;
+use crate::*;
 use ark_ff::Field;
 use ark_r1cs_std::{boolean::Boolean, prelude::*, uint64::UInt64};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
