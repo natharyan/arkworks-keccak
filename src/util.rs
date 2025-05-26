@@ -5,8 +5,11 @@ use ark_r1cs_std::{R1CSVar, alloc::AllocVar};
 use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 use bitvec::order::Lsb0;
 use bitvec::prelude::BitVec;
+use sha3::{
+    Digest, Sha3_256, Shake128, Shake256,
+    digest::{ExtendableOutput, Update, XofReader},
+};
 use tiny_keccak::{Hasher, Keccak};
-use sha3::{Digest, Sha3_256};
 
 pub fn bytes_to_bitvec<F: Field>(bytes: &[u8]) -> Vec<Boolean<F>> {
     let bits = BitVec::<u8, Lsb0>::from_slice(bytes);
@@ -76,15 +79,36 @@ pub fn rotl<F: Field>(x: &UInt64<F>, shift: usize) -> Result<UInt64<F>, Synthesi
 pub fn keccak256(input: &[u8]) -> [u8; 32] {
     let mut hasher = Keccak::v256();
     let mut output = [0u8; 32];
-    hasher.update(input);
+    tiny_keccak::Hasher::update(&mut hasher, input);
     hasher.finalize(&mut output);
     output
 }
 
 pub fn sha3_256(input: &[u8]) -> [u8; 32] {
     let mut hasher = Sha3_256::new();
-    hasher.update(input);
-    let result: [u8;32] = hasher.finalize().as_slice().try_into().expect("Wrong length");
+    Update::update(&mut hasher, input);
+    let result: [u8; 32] = hasher
+        .finalize()
+        .as_slice()
+        .try_into()
+        .expect("Wrong length");
     result
-    
+}
+
+pub fn shake_128(input: &[u8]) -> [u8; 16] {
+    let mut hasher = Shake128::default();
+    hasher.update(input);
+    let mut reader = hasher.finalize_xof();
+    let mut result = [0u8; 16];
+    XofReader::read(&mut reader, &mut result);
+    result
+}
+
+pub fn shake_256(input: &[u8]) -> [u8; 32] {
+    let mut hasher = Shake256::default();
+    hasher.update(input);
+    let mut reader = hasher.finalize_xof();
+    let mut result = [0u8; 32];
+    XofReader::read(&mut reader, &mut result);
+    result
 }
