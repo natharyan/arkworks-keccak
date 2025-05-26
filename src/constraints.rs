@@ -187,8 +187,58 @@ pub fn keccak256_gadget<F: Field>(
     let mut z = Vec::new();
 
     // while output is requested
-    // Z = Z || S[x,y]
-    // S = Keccak-f[r + c](S)
+    //   Z = Z || S[x,y],                        for (x,y) such that x+5*y < r/w
+    //   S = Keccak-f[r+c](S)
+    for item in state[..256].iter() {
+        // n = 0.r + 256
+        z.push(item.clone());
+    }
+
+    Ok(z)
+}
+// sha3_256
+pub fn sha3_256_gadget<F: Field>(
+    cs: ConstraintSystemRef<F>,
+    input: &[Boolean<F>],
+) -> Result<Vec<Boolean<F>>, SynthesisError> {
+    assert_eq!(input.len(), 512);
+    let mut m = Vec::new();
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..1600 {
+        if i < 512 {
+            m.push(input[i].clone());
+        } else {
+            m.push(Boolean::Constant(false));
+        }
+    }
+
+    // # Padding
+    // d = 0x06
+    // P = Mbytes || d || 0x00 || … || 0x00
+    // P = P xor (0x00 || … || 0x00 || 0x80)
+    //0x0600 ... 0080
+    // M' = pad10*1(r,(M||01))
+    m[513] = Boolean::Constant(true);
+    m[514] = Boolean::Constant(true);
+    m[1087] = Boolean::Constant(true); // r = 1088, r+c = 1600
+
+    // # Initialization
+    // S[x,y] = 0,                               for (x,y) in (0…4,0…4)
+
+    // # Absorbing phase
+    // for each block Pi in P
+    //   S[x,y] = S[x,y] xor Pi[x+5*y],          for (x,y) such that x+5*y < r/w
+    //   S = Keccak-f[r+c](S)
+
+    let state = keccak_f_1600(cs, &m)?; // m = r in sha3_256, so a single block (m_1) is produced after padding
+
+    //# Squeezing phase
+    // Z = empty string
+    let mut z = Vec::new();
+
+     // while output is requested
+    //   Z = Z || S[x,y],                        for (x,y) such that x+5*y < r/w
+    //   S = Keccak-f[r+c](S)
     for item in state[..256].iter() {
         // n = 0.r + 256
         z.push(item.clone());
@@ -198,6 +248,11 @@ pub fn keccak256_gadget<F: Field>(
 }
 
 pub struct KeccakCircuit<F: Field> {
+    pub preimage: Vec<Boolean<F>>, // 512 bools
+    pub expected: [u8; 32],        // 32 bytes == 256 bits
+}
+
+pub struct Sha3_256Circuit<F: Field> {
     pub preimage: Vec<Boolean<F>>, // 512 bools
     pub expected: [u8; 32],        // 32 bytes == 256 bits
 }
@@ -217,11 +272,26 @@ impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F> {
     }
 }
 
+impl<F: Field> ConstraintSynthesizer<F> for Sha3_256Circuit<F> {
+    fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
+        let preimage = vec_to_public_input(cs.clone(), "preimage", self.preimage)?;
+        let expected = bytes_to_bitvec::<F>(&self.expected);
+        let expected = vec_to_public_input(cs.clone(), "expected", expected)?;
+        let result = sha3_256_gadget(cs.clone(), &preimage)?;
+
+        for (o, e) in result.iter().zip(expected.iter()) {
+            o.enforce_equal(e)?;
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod test {
 
     use super::*;
-    use crate::util::keccak256;
+    use crate::util::{keccak256,sha3_256};
     use proptest::proptest;
 
     proptest! {
@@ -238,6 +308,45 @@ mod test {
             let preimage = bytes_to_bitvec::<Fr>(&preimage);
 
             let circuit = KeccakCircuit {
+                // public inputs
+                preimage: preimage.clone(),
+                expected: expected.clone(),
+            };
+
+            // some boilerplate that helps with debugging
+            let mut layer = ConstraintLayer::default();
+            layer.mode = TracingMode::OnlyConstraints;
+            let subscriber = Registry::default().with(layer);
+            let _guard = tracing::subscriber::set_default(subscriber);
+
+            // next, let's make the circuit
+            let cs = ConstraintSystem::new_ref();
+            circuit.generate_constraints(cs.clone()).unwrap();
+
+            // let's check whether the constraint system is satisfied
+            let is_satisfied = cs.is_satisfied().unwrap();
+            if !is_satisfied{
+                // if it isn't, find out the offending constraint.
+                println!("Unsatisfied constraint: {:?}\n", cs.which_is_unsatisfied());
+            }
+            assert!(is_satisfied);
+        }
+    }
+    
+    proptest! {
+        #[test]
+        fn test_sha3_256(preimage in "[0-9a-f]{128}"){
+            use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
+            use tracing_subscriber::Registry;
+            use tracing_subscriber::layer::SubscriberExt;
+            use ark_bls12_381::Fr;
+
+            let preimage = hex::decode(preimage).unwrap();
+            let expected = sha3_256(&preimage);
+
+            let preimage = bytes_to_bitvec::<Fr>(&preimage);
+
+            let circuit = Sha3_256Circuit {
                 // public inputs
                 preimage: preimage.clone(),
                 expected: expected.clone(),

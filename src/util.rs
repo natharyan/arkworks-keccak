@@ -6,6 +6,7 @@ use ark_relations::r1cs::{ConstraintSystemRef, SynthesisError};
 use bitvec::order::Lsb0;
 use bitvec::prelude::BitVec;
 use tiny_keccak::{Hasher, Keccak};
+use sha3::{Digest, Sha3_256};
 
 pub fn bytes_to_bitvec<F: Field>(bytes: &[u8]) -> Vec<Boolean<F>> {
     let bits = BitVec::<u8, Lsb0>::from_slice(bytes);
@@ -73,9 +74,17 @@ pub fn rotl<F: Field>(x: &UInt64<F>, shift: usize) -> Result<UInt64<F>, Synthesi
 }
 
 pub fn keccak256(input: &[u8]) -> [u8; 32] {
-    let mut hash_func = Keccak::v256();
+    let mut hasher = Keccak::v256();
     let mut output = [0u8; 32];
-    hash_func.update(input);
-    hash_func.finalize(&mut output);
+    hasher.update(input);
+    hasher.finalize(&mut output);
     output
+}
+
+pub fn sha3_256(input: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha3_256::new();
+    hasher.update(input);
+    let result: [u8;32] = hasher.finalize().as_slice().try_into().expect("Wrong length");
+    result
+    
 }
