@@ -148,54 +148,6 @@ fn keccak_f_1600<F: Field>(
 
     Ok(a_new)
 }
-// keccak256
-// pub fn keccak256_gadget<F: Field>(
-//     cs: ConstraintSystemRef<F>,
-//     input: &[Boolean<F>],
-// ) -> Result<Vec<Boolean<F>>, SynthesisError> {
-//     assert_eq!(input.len(), 512);
-//     let mut m = Vec::new();
-//     #[allow(clippy::needless_range_loop)]
-//     for i in 0..1600 {
-//         if i < 512 {
-//             m.push(input[i].clone());
-//         } else {
-//             m.push(Boolean::Constant(false));
-//         }
-//     }
-
-//     // # Padding
-//     // d = 2^|Mbits| + sum for i=0..|Mbits|-1 of 2^i*Mbits[i]
-//     // P = Mbytes || d || 0x00 || … || 0x00
-//     // P = P xor (0x00 || … || 0x00 || 0x80)
-//     //0x0100 ... 0080
-//     m[512] = Boolean::Constant(true);
-//     m[1087] = Boolean::Constant(true); // r = 1088, r+c = 1600
-
-//     // # Initialization
-//     // S[x,y] = 0,                               for (x,y) in (0…4,0…4)
-
-//     // # Absorbing phase
-//     // for each block Pi in P
-//     //   S[x,y] = S[x,y] xor Pi[x+5*y],          for (x,y) such that x+5*y < r/w
-//     //   S = Keccak-f[r+c](S)
-
-//     let state = keccak_f_1600(cs, &m)?; // m = r in keccak256, so a single block (m_1) is produced after padding
-
-//     //# Squeezing phase
-//     // Z = empty string
-//     let mut z = Vec::new();
-
-//     // while output is requested
-//     //   Z = Z || S[x,y],                        for (x,y) such that x+5*y < r/w
-//     //   S = Keccak-f[r+c](S)
-//     for item in state[..256].iter() {
-//         // n = 0.r + 256
-//         z.push(item.clone());
-//     }
-
-//     Ok(z)
-// }
 
 #[derive(Clone, Copy)]
 pub enum KeccakMode {
@@ -270,7 +222,7 @@ fn pad101<F: Field>(
     }
 }
 
-pub fn split<F: Field>(
+fn split<F: Field>(
     input: &[Boolean<F>],
     r: usize,
 ) -> Result<Vec<Vec<Boolean<F>>>, SynthesisError> {
@@ -280,6 +232,15 @@ pub fn split<F: Field>(
     Ok(blocks)
 }
 
+fn truncate<F: Field>(
+    input: &[Boolean<F>],
+    t: usize
+) -> Result<Vec<Boolean<F>>, SynthesisError> {
+    assert!(input.len() >= t, "Lesser than required squeezing rounds");
+
+    Ok(input[..t].to_vec())
+}
+
 pub fn keccak_gadget<F: Field>(
     cs: ConstraintSystemRef<F>,
     input: &[Boolean<F>],
@@ -287,24 +248,22 @@ pub fn keccak_gadget<F: Field>(
     d: usize,
 ) -> Result<Vec<Boolean<F>>, SynthesisError> {
     assert!(input.len() % 8 == 0);
+
     // # Padding
     // M'.len() % r = 0
     let padded: Vec<Boolean<F>> = pad101(input, mode)?;
 
-    // # Initialization
-    // o[x,y] = 0,                               for (x,y) in (0…4,0…4)
     let r: usize = match mode {
         KeccakMode::Keccak256 => 1088,
         KeccakMode::Sha3_256 => 1088,
         KeccakMode::Shake128 => 1344,
         KeccakMode::Shake256 => 1088,
     };
+    
     // # Absorbing phase
+    // Initialization
     let mut state: Vec<Boolean<F>> = vec![Boolean::<F>::constant(false); 1600];
     let m_blocks: Vec<Vec<Boolean<F>>> = split(&padded, r)?;
-    // for each block m_i in m'
-    //   S[x,y] = S[x,y] xor m_i[x+5*y],          for (x,y) such that x+5*y < r/w
-    //   S = Keccak-f[r+c](S)
     for m_i in m_blocks.iter() {
         for i in 0..r {
             state[i] = Boolean::xor(&state[i], &m_i[i])?;
@@ -313,15 +272,16 @@ pub fn keccak_gadget<F: Field>(
     }
 
     //# Squeezing phase
-    // Z = empty string
-    let mut z = Vec::new();
-    // while output is requested
-    //   Z = Z || S[x,y],                        for (x,y) such that x+5*y < r/w
-    //   S = Keccak-f[r+c](S)
-    for item in state[..d].iter() {
-        // n = 0.r + d
-        z.push(item.clone());
+    let mut z: Vec<Boolean<F>> = Vec::new();
+    println!("d: {}",d);
+    z.extend(truncate(&state, r)?);
+    while z.len() < d {
+        state = keccak_f_1600(cs.clone(), &state)?;
+        z.extend(truncate(&state, r)?);
+        println!("z size: {}",z.len());
     }
+
+    z = truncate(&z, d)?;
 
     Ok(z)
 }
@@ -330,6 +290,7 @@ pub struct KeccakCircuit<F: Field> {
     pub preimage: Vec<Boolean<F>>, // 512 bools
     pub expected: Vec<u8>,         // 32 bytes == 256 bits
     pub mode: KeccakMode,
+    pub outputsize: usize,         // binary output size
 }
 
 impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F> {
@@ -337,17 +298,14 @@ impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F> {
         let preimage: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "preimage", self.preimage)?;
         let expected: Vec<Boolean<F>> = bytes_to_bitvec::<F>(&self.expected);
         let expected: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "expected", expected)?;
-        let d = match self.mode {
-            KeccakMode::Keccak256 => 256,
-            KeccakMode::Sha3_256 => 256,
-            KeccakMode::Shake128 => 128,
-            KeccakMode::Shake256 => 256,
-        };
-        let result: Vec<Boolean<F>> = keccak_gadget(cs.clone(), &preimage, self.mode, d)?;
+
+        let result: Vec<Boolean<F>> = keccak_gadget(cs.clone(), &preimage, self.mode, self.outputsize)?;
 
         for (o, e) in result.iter().zip(expected.iter()) {
             o.enforce_equal(e)?;
         }
+
+        
 
         Ok(())
     }
@@ -362,13 +320,13 @@ mod test {
 
     proptest! {
         #[test]
-        fn test_keccak256(preimage in vec(any::<u8>(), 0..=256)){
+        fn test_keccak256(preimage in vec(any::<u8>(), 0..=256), d in 100_usize..=2176_usize){
             use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
             use tracing_subscriber::Registry;
             use tracing_subscriber::layer::SubscriberExt;
             use ark_bls12_381::Fr;
 
-            let expected = keccak256(&preimage);
+            let expected = keccak256(&preimage,d/8);
 
             let preimage = bytes_to_bitvec::<Fr>(&preimage);
             println!("input length: {} bits", preimage.len());
@@ -378,6 +336,7 @@ mod test {
                 preimage: preimage.clone(),
                 expected: expected.to_vec(),
                 mode: KeccakMode::Keccak256,
+                outputsize: d,
             };
 
             // some boilerplate that helps with debugging
@@ -416,7 +375,8 @@ mod test {
                 // public inputs
                 preimage: preimage.clone(),
                 expected: expected.to_vec(),
-                mode: KeccakMode::Sha3_256
+                mode: KeccakMode::Sha3_256,
+                outputsize: 256,
             };
 
             // some boilerplate that helps with debugging
@@ -440,21 +400,22 @@ mod test {
     }
     proptest! {
         #[test]
-        fn test_shake128(preimage in vec(any::<u8>(), 0..=256)){
+        fn test_shake128(preimage in vec(any::<u8>(), 0..=256), d in 100_usize..=2688_usize){
             use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
             use tracing_subscriber::Registry;
             use tracing_subscriber::layer::SubscriberExt;
             use ark_bls12_381::Fr;
 
-            let expected = shake_128(&preimage);
+            let expected = shake_128(&preimage,d/8);
 
             let preimage = bytes_to_bitvec::<Fr>(&preimage);
-            println!("input length: {} bits", preimage.len());
+            // println!("input length: {} bits", preimage.len());
             let circuit = KeccakCircuit {
                 // public inputs
                 preimage: preimage.clone(),
                 expected: expected.to_vec(),
-                mode: KeccakMode::Shake128
+                mode: KeccakMode::Shake128,
+                outputsize: d,
             };
 
             // some boilerplate that helps with debugging
@@ -479,13 +440,13 @@ mod test {
 
     proptest! {
         #[test]
-        fn test_shake256(preimage in vec(any::<u8>(), 0..=256)){
+        fn test_shake256(preimage in vec(any::<u8>(), 0..=256), d in 100_usize..=2176_usize){
             use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
             use tracing_subscriber::Registry;
             use tracing_subscriber::layer::SubscriberExt;
             use ark_bls12_381::Fr;
 
-            let expected = shake_256(&preimage);
+            let expected = shake_256(&preimage, d/8);
 
             let preimage = bytes_to_bitvec::<Fr>(&preimage);
             println!("input length: {} bits", preimage.len());
@@ -493,7 +454,8 @@ mod test {
                 // public inputs
                 preimage: preimage.clone(),
                 expected: expected.to_vec(),
-                mode: KeccakMode::Shake256
+                mode: KeccakMode::Shake256,
+                outputsize: d,
             };
 
             // some boilerplate that helps with debugging
