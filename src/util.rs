@@ -75,6 +75,7 @@ pub fn rotl<F: Field>(x: &UInt64<F>, shift: usize) -> Result<UInt64<F>, Synthesi
     Ok(UInt64::from_bits_le(&rotatedvec))
 }
 
+// TODO: generalise output length
 pub fn keccak256(input: &[u8], d: usize) -> Vec<u8> {
     let mut hasher = Keccak256::new();
     Update::update(&mut hasher, input);
