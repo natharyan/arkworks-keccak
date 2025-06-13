@@ -308,6 +308,35 @@ impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F> {
     }
 }
 
+// generate constraint system
+pub fn gen_cs<F: Field>(
+    preimage: Vec<Boolean<F>>,
+    expected: Vec<u8>,
+    mode: KeccakMode,
+    d: usize,
+) -> ConstraintSystemRef<F> {
+    use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
+    use tracing_subscriber::Registry;
+    use tracing_subscriber::layer::SubscriberExt;
+    
+    let circuit = KeccakCircuit {
+        // public inputs
+        preimage: preimage.clone(),
+        expected: expected.to_vec(),
+        mode: mode,
+        outputsize: d,
+    };
+    let mut layer = ConstraintLayer::default();
+    layer.mode = TracingMode::OnlyConstraints;
+    let subscriber = Registry::default().with(layer);
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let cs = ConstraintSystem::new_ref();
+    circuit.generate_constraints(cs.clone()).unwrap();
+
+    cs
+}
+
 #[cfg(test)]
 mod test {
 
@@ -373,7 +402,8 @@ mod test {
         let mut rng = ark_std::rand::thread_rng();
         let preimage_length = rng.gen_range(1..=256);
         let preimage: Vec<u8> = (0..preimage_length).map(|_| rng.r#gen()).collect();
-        let d: usize = rng.gen_range(100..=4032);
+        // let d: usize = rng.gen_range(100..=4032);
+        let d: usize = 256;
         
         let expected = sha3_256(&preimage);
         
@@ -406,6 +436,7 @@ mod test {
             println!("Unsatisfied constraint: {:?}\n", cs.which_is_unsatisfied());
         }
         assert!(is_satisfied);
+        
     }
 
     #[test]
