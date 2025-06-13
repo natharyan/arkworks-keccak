@@ -308,33 +308,38 @@ impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F> {
     }
 }
 
-// generate constraint system
-pub fn gen_cs<F: Field>(
-    preimage: Vec<Boolean<F>>,
-    expected: Vec<u8>,
-    mode: KeccakMode,
-    d: usize,
-) -> ConstraintSystemRef<F> {
-    use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
-    use tracing_subscriber::Registry;
-    use tracing_subscriber::layer::SubscriberExt;
-    
-    let circuit = KeccakCircuit {
-        // public inputs
-        preimage: preimage.clone(),
-        expected: expected.to_vec(),
-        mode: mode,
-        outputsize: d,
-    };
-    let mut layer = ConstraintLayer::default();
-    layer.mode = TracingMode::OnlyConstraints;
-    let subscriber = Registry::default().with(layer);
-    let _guard = tracing::subscriber::set_default(subscriber);
+impl<F: Field> KeccakCircuit<F>{
+    pub fn init_circuit(
+        preimage: Vec<Boolean<F>>,
+        expected: Vec<u8>,
+        mode: KeccakMode,
+        d: usize
+    ) -> KeccakCircuit<F>{
+        let circuit = KeccakCircuit {
+            // public inputs
+            preimage: preimage.clone(),
+            expected: expected.to_vec(),
+            mode: mode,
+            outputsize: d,
+        };
+        circuit
+    }
+    // generate constraint system
+    pub fn gen_cs(self) -> ConstraintSystemRef<F> {
+        use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
+        use tracing_subscriber::Registry;
+        use tracing_subscriber::layer::SubscriberExt;
+        
+        let mut layer = ConstraintLayer::default();
+        layer.mode = TracingMode::OnlyConstraints;
+        let subscriber = Registry::default().with(layer);
+        let _guard = tracing::subscriber::set_default(subscriber);
 
-    let cs = ConstraintSystem::new_ref();
-    circuit.generate_constraints(cs.clone()).unwrap();
-
-    cs
+        let cs = ConstraintSystem::new_ref();
+        // ownership of the KeccakCircuit object is transfered to the local scope.
+        self.generate_constraints(cs.clone()).unwrap();
+        cs
+    }
 }
 
 #[cfg(test)]
