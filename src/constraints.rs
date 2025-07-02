@@ -1,5 +1,5 @@
-use crate::util::{and, bytes_to_bitvec, not, rotl, vec_to_public_input};
-use ark_ff::Field;
+use crate::util::{and, bytes_to_bitvec, not, rotl, vec_to_public_input, libary_f1600_to_bool};
+use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::{boolean::Boolean, prelude::*, uint64::UInt64};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_std::vec::Vec;
@@ -21,12 +21,12 @@ const ROTR: [usize; 25] = [
 ];
 
 // xor_2
-fn xor_2<F: Field>(a: &UInt64<F>, b: &UInt64<F>) -> Result<UInt64<F>, SynthesisError> {
+fn xor_2<F: PrimeField>(a: &UInt64<F>, b: &UInt64<F>) -> Result<UInt64<F>, SynthesisError> {
     a.xor(&b)
 }
 
 // xor_5
-fn xor_5<F: Field>(
+fn xor_5<F: PrimeField>(
     a: &UInt64<F>,
     b: &UInt64<F>,
     c: &UInt64<F>,
@@ -42,7 +42,7 @@ fn xor_5<F: Field>(
 }
 
 // xor_not_and
-fn xor_not_and<F: Field>(
+fn xor_not_and<F: PrimeField>(
     a: &UInt64<F>,
     b: &UInt64<F>,
     c: &UInt64<F>,
@@ -54,7 +54,7 @@ fn xor_not_and<F: Field>(
 }
 
 // round_1600: \theta, \rho, \pi, \chi, \iota mappings
-fn round_1600<F: Field>(
+fn round_1600<F: PrimeField>(
     _cs: ConstraintSystemRef<F>,
     a: &[UInt64<F>],
     rc: u64,
@@ -127,7 +127,7 @@ fn round_1600<F: Field>(
 }
 
 // keccak_f_1600
-fn keccak_f_1600<F: Field>(
+pub fn keccak_f_1600<F: PrimeField>(
     cs: ConstraintSystemRef<F>,
     input: &[Boolean<F>],
 ) -> Result<Vec<Boolean<F>>, SynthesisError> {
@@ -157,7 +157,7 @@ pub enum KeccakMode {
     Shake256,
 }
 
-fn pad101<F: Field>(
+pub fn pad101<F: PrimeField>(
     input: &[Boolean<F>],
     mode: KeccakMode,
 ) -> Result<Vec<Boolean<F>>, SynthesisError> {
@@ -222,7 +222,7 @@ fn pad101<F: Field>(
     }
 }
 
-fn split<F: Field>(
+pub fn split_to_blocks<F: PrimeField>(
     input: &[Boolean<F>],
     r: usize,
 ) -> Result<Vec<Vec<Boolean<F>>>, SynthesisError> {
@@ -232,7 +232,7 @@ fn split<F: Field>(
     Ok(blocks)
 }
 
-fn truncate<F: Field>(
+pub fn truncate<F: PrimeField>(
     input: &[Boolean<F>],
     t: usize
 ) -> Result<Vec<Boolean<F>>, SynthesisError> {
@@ -241,7 +241,16 @@ fn truncate<F: Field>(
     Ok(input[..t].to_vec())
 }
 
-pub fn keccak_gadget<F: Field>(
+pub fn ret_r(mode: KeccakMode) -> usize{
+    match mode {
+        KeccakMode::Keccak256 => 1088,
+        KeccakMode::Sha3_256 => 1088,
+        KeccakMode::Shake128 => 1344,
+        KeccakMode::Shake256 => 1088,
+    }
+}
+
+pub fn keccak_gadget<F: PrimeField>(
     cs: ConstraintSystemRef<F>,
     input: &[Boolean<F>],
     mode: KeccakMode,
@@ -253,22 +262,24 @@ pub fn keccak_gadget<F: Field>(
     // M'.len() % r = 0
     let padded: Vec<Boolean<F>> = pad101(input, mode)?;
 
-    let r: usize = match mode {
-        KeccakMode::Keccak256 => 1088,
-        KeccakMode::Sha3_256 => 1088,
-        KeccakMode::Shake128 => 1344,
-        KeccakMode::Shake256 => 1088,
-    };
+    let r: usize = ret_r(mode);
     
     // # Absorbing phase
     // Initialization
     let mut state: Vec<Boolean<F>> = vec![Boolean::<F>::constant(false); 1600];
-    let m_blocks: Vec<Vec<Boolean<F>>> = split(&padded, r)?;
+    let m_blocks: Vec<Vec<Boolean<F>>> = split_to_blocks(&padded, r)?;
     for m_i in m_blocks.iter() {
         for i in 0..r {
             state[i] = Boolean::xor(&state[i], &m_i[i])?;
         }
+
+        // expected output for keccak_f_1600
+        let expected_state = libary_f1600_to_bool(state.clone());
+
         state = keccak_f_1600(cs.clone(), &state)?;
+        for (o, i) in state.iter().zip(expected_state.iter()) {
+            assert_eq!(o.value().unwrap(), i.value().unwrap(), "keccak step mismatch!!");
+        }
     }
 
     //# Squeezing phase
@@ -285,19 +296,19 @@ pub fn keccak_gadget<F: Field>(
     Ok(z)
 }
 
-pub struct KeccakCircuit<F: Field> {
+pub struct KeccakCircuit<F: PrimeField> {
     pub preimage: Vec<Boolean<F>>, // 512 bools
     pub expected: Vec<u8>,         // 32 bytes == 256 bits
     pub mode: KeccakMode,
     pub outputsize: usize,         // binary output size
 }
 
-impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F> {
+impl<F: PrimeField> ConstraintSynthesizer<F> for KeccakCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
         let preimage: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "preimage", self.preimage)?;
         let expected: Vec<Boolean<F>> = bytes_to_bitvec::<F>(&self.expected);
         let expected: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "expected", expected)?;
-
+        // println!("Number of public inputs: {} + {}\n", preimage.len(), expected.len());
         let result: Vec<Boolean<F>> = keccak_gadget(cs.clone(), &preimage, self.mode, self.outputsize)?;
 
         for (o, e) in result.iter().zip(expected.iter()) {
@@ -305,40 +316,6 @@ impl<F: Field> ConstraintSynthesizer<F> for KeccakCircuit<F> {
         }
 
         Ok(())
-    }
-}
-
-impl<F: Field> KeccakCircuit<F>{
-    pub fn init_circuit(
-        preimage: Vec<Boolean<F>>,
-        expected: Vec<u8>,
-        mode: KeccakMode,
-        d: usize
-    ) -> KeccakCircuit<F>{
-        let circuit = KeccakCircuit {
-            // public inputs
-            preimage: preimage.clone(),
-            expected: expected.to_vec(),
-            mode: mode,
-            outputsize: d,
-        };
-        circuit
-    }
-    // generate constraint system
-    pub fn gen_cs(self) -> ConstraintSystemRef<F> {
-        use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
-        use tracing_subscriber::Registry;
-        use tracing_subscriber::layer::SubscriberExt;
-        
-        let mut layer = ConstraintLayer::default();
-        layer.mode = TracingMode::OnlyConstraints;
-        let subscriber = Registry::default().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
-
-        let cs = ConstraintSystem::new_ref();
-        // ownership of the KeccakCircuit object is transfered to the local scope.
-        self.generate_constraints(cs.clone()).unwrap();
-        cs
     }
 }
 
@@ -454,7 +431,7 @@ mod test {
         use ark_std::rand::Rng;
 
         let mut rng = ark_std::rand::thread_rng();
-        let preimage_length = rng.gen_range(1..=256);
+        let preimage_length = rng.gen_range(1..=5);
         let preimage: Vec<u8> = (0..preimage_length).map(|_| rng.r#gen()).collect();
         let d: usize = rng.gen_range(100..=4032);
 

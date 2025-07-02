@@ -1,4 +1,4 @@
-use ark_ff::Field;
+use ark_ff::{Field,PrimeField};
 use ark_r1cs_std::boolean::Boolean;
 use ark_r1cs_std::uint64::UInt64;
 use ark_r1cs_std::{R1CSVar, alloc::AllocVar};
@@ -9,6 +9,7 @@ use sha3::{
     Digest, Sha3_256, Shake128, Shake256,Keccak256,
     digest::{ExtendableOutput, Update, XofReader},
 };
+use keccak::f1600;
 
 pub fn bytes_to_bitvec<F: Field>(bytes: &[u8]) -> Vec<Boolean<F>> {
     let bits = BitVec::<u8, Lsb0>::from_slice(bytes);
@@ -73,6 +74,38 @@ pub fn rotl<F: Field>(x: &UInt64<F>, shift: usize) -> Result<UInt64<F>, Synthesi
         rotatedvec.push(bitvec[(i + shift) % 64].clone());
     }
     Ok(UInt64::from_bits_le(&rotatedvec))
+}
+
+fn vec_bool_to_arr_u64<F: PrimeField>(input: Vec<Boolean<F>>) -> [u64; 25] {
+    let mut input_u64: [u64; 25] = [0; 25];
+    for (i, chunk) in input.chunks(64).enumerate() {
+        let mut word = 0u64;
+        for (bit_idx, bit) in chunk.iter().enumerate() {
+            if bit.value().unwrap_or(false) {
+                word |= 1u64 << bit_idx; // Little-endian bit order
+            }
+        }
+        input_u64[i] = word;
+    }
+
+    input_u64
+}
+
+fn arr_u64_to_vec_bool<F: PrimeField>(input: &[u64; 25]) -> Vec<Boolean<F>>{
+    input
+    .iter()
+    .flat_map(|word| {
+        (0..64).map(move |i| {
+            Boolean::constant((word >> i) & 1 == 1) // Extract each bit and convert to Boolean<F>
+        })
+    })
+    .collect()
+}
+
+pub fn libary_f1600_to_bool<F: PrimeField>(input: Vec<Boolean<F>>) -> Vec<Boolean<F>>{
+    let mut input_arr_u64 = vec_bool_to_arr_u64(input);
+    f1600(&mut input_arr_u64);
+    arr_u64_to_vec_bool::<F>(&input_arr_u64)
 }
 
 // TODO: generalise output length
