@@ -108,6 +108,27 @@ pub fn libary_f1600_to_bool<F: PrimeField>(input: Vec<Boolean<F>>) -> Vec<Boolea
     arr_u64_to_vec_bool::<F>(&input_arr_u64)
 }
 
+/// One step of the absorption (flag = 0) or squeezing phase (flag = 1)
+pub fn libary_step_sponge<F: PrimeField>(mut state: Vec<Boolean<F>>, m_i: Option<Vec<Boolean<F>>>, r: usize, flag: Boolean<F>) -> Result<Vec<Boolean<F>>, SynthesisError>{
+    if flag == Boolean::constant(false){
+        if let Some(m_i) = m_i {
+            println!("absorption step");
+            for i in 0..r {
+                state[i] = Boolean::xor(&state[i], &m_i[i])?;
+            }
+        } else {
+            return Err(SynthesisError::AssignmentMissing);
+        }
+    } else {
+        println!("squeezing step");
+        // No m_i required
+    }
+    
+    let mut input_arr_u64 = vec_bool_to_arr_u64(state);
+    f1600(&mut input_arr_u64);
+    Ok(arr_u64_to_vec_bool::<F>(&input_arr_u64))
+}
+
 // TODO: generalise output length
 pub fn keccak256(input: &[u8], _d: usize) -> Vec<u8> {
     let mut hasher = Keccak256::new();

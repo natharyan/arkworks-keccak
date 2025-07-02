@@ -1,4 +1,4 @@
-use crate::util::{and, bytes_to_bitvec, not, rotl, vec_to_public_input, libary_f1600_to_bool};
+use crate::util::{and, bytes_to_bitvec, libary_f1600_to_bool, libary_step_sponge, not, rotl, vec_to_public_input};
 use ark_ff::{Field, PrimeField};
 use ark_r1cs_std::{boolean::Boolean, prelude::*, uint64::UInt64};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
@@ -269,13 +269,11 @@ pub fn keccak_gadget<F: PrimeField>(
     let mut state: Vec<Boolean<F>> = vec![Boolean::<F>::constant(false); 1600];
     let m_blocks: Vec<Vec<Boolean<F>>> = split_to_blocks(&padded, r)?;
     for m_i in m_blocks.iter() {
+        // expected output for single step of absorption phase
+        let expected_state = libary_step_sponge(state.clone(), Some((*m_i.clone()).to_vec()), r, Boolean::Constant(false))?;
         for i in 0..r {
             state[i] = Boolean::xor(&state[i], &m_i[i])?;
         }
-
-        // expected output for keccak_f_1600
-        let expected_state = libary_f1600_to_bool(state.clone());
-
         state = keccak_f_1600(cs.clone(), &state)?;
         for (o, i) in state.iter().zip(expected_state.iter()) {
             assert_eq!(o.value().unwrap(), i.value().unwrap(), "keccak step mismatch!!");
@@ -286,7 +284,13 @@ pub fn keccak_gadget<F: PrimeField>(
     let mut z: Vec<Boolean<F>> = Vec::new();
     z.extend(truncate(&state, r)?);
     while z.len() < d {
+        // expected output for single step of squeezing phase
+        let expected_state = libary_step_sponge(state.clone(), None, r, Boolean::Constant(true
+        ))?;
         state = keccak_f_1600(cs.clone(), &state)?;
+        for (o, i) in state.iter().zip(expected_state.iter()) {
+            assert_eq!(o.value().unwrap(), i.value().unwrap(), "keccak step mismatch!!");
+        }
         z.extend(truncate(&state, r)?);
         println!("z size: {}",z.len());
     }
