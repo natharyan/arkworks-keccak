@@ -1,5 +1,5 @@
-use crate::util::{and, bytes_to_bitvec, libary_f1600_to_bool, libary_step_sponge, not, rotl, vec_to_public_input};
-use ark_ff::{Field, PrimeField};
+use crate::util::{bytes_to_bitvec, libary_step_sponge, vec_to_public_input, UInt64Extensions};
+use ark_ff::PrimeField;
 use ark_r1cs_std::{boolean::Boolean, prelude::*, uint64::UInt64};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_std::vec::Vec;
@@ -48,8 +48,8 @@ fn xor_not_and<F: PrimeField>(
     c: &UInt64<F>,
 ) -> Result<UInt64<F>, SynthesisError> {
     // a^((!b) & c)
-    let neqb: UInt64<F> = not(&b)?;
-    let nbc: UInt64<F> = and(&neqb, &c)?;
+    let neqb: UInt64<F> = b.not()?;
+    let nbc: UInt64<F> = neqb.and(c)?;
     a.xor(&nbc)
 }
 
@@ -81,7 +81,7 @@ fn round_1600<F: PrimeField>(
     let mut d: Vec<UInt64<F>> = Vec::new();
     for x in 0..5 {
         d.push(xor_2(
-            &rotl(&cp[(x + 1usize) % 5usize], 1)?,
+            &cp[(x + 1usize) % 5usize].rotl(1)?,
             &cp[(x + 4usize) % 5usize],
         )?)
     }
@@ -102,7 +102,7 @@ fn round_1600<F: PrimeField>(
     for y in 0..5 {
         for x in 0..5 {
             b[y + ((((2 * x) + (3 * y)) % 5) * 5usize)] =
-                rotl(&a_new1[x + (y * 5usize)], ROTR[x + (y * 5usize)])?;
+                a_new1[x + (y * 5usize)].rotl(ROTR[x + (y * 5usize)])?;
         }
     }
 
@@ -234,14 +234,14 @@ pub fn split_to_blocks<F: PrimeField>(
 
 pub fn truncate<F: PrimeField>(
     input: &[Boolean<F>],
-    t: usize
+    t: usize,
 ) -> Result<Vec<Boolean<F>>, SynthesisError> {
     assert!(input.len() >= t, "Lesser than required squeezing rounds");
 
     Ok(input[..t].to_vec())
 }
 
-pub fn ret_r(mode: KeccakMode) -> usize{
+pub fn ret_r(mode: KeccakMode) -> usize {
     match mode {
         KeccakMode::Keccak256 => 1088,
         KeccakMode::Sha3_256 => 1088,
@@ -263,20 +263,29 @@ pub fn keccak_gadget<F: PrimeField>(
     let padded: Vec<Boolean<F>> = pad101(input, mode)?;
 
     let r: usize = ret_r(mode);
-    
+
     // # Absorbing phase
     // Initialization
     let mut state: Vec<Boolean<F>> = vec![Boolean::<F>::constant(false); 1600];
     let m_blocks: Vec<Vec<Boolean<F>>> = split_to_blocks(&padded, r)?;
     for m_i in m_blocks.iter() {
         // expected output for single step of absorption phase
-        let expected_state = libary_step_sponge(state.clone(), Some((*m_i.clone()).to_vec()), r, Boolean::Constant(false))?;
+        let expected_state = libary_step_sponge(
+            state.clone(),
+            Some((*m_i.clone()).to_vec()),
+            r,
+            Boolean::Constant(false),
+        )?;
         for i in 0..r {
             state[i] = Boolean::xor(&state[i], &m_i[i])?;
         }
         state = keccak_f_1600(cs.clone(), &state)?;
         for (o, i) in state.iter().zip(expected_state.iter()) {
-            assert_eq!(o.value().unwrap(), i.value().unwrap(), "keccak step mismatch!!");
+            assert_eq!(
+                o.value().unwrap(),
+                i.value().unwrap(),
+                "keccak step mismatch!!"
+            );
         }
     }
 
@@ -285,14 +294,17 @@ pub fn keccak_gadget<F: PrimeField>(
     z.extend(truncate(&state, r)?);
     while z.len() < d {
         // expected output for single step of squeezing phase
-        let expected_state = libary_step_sponge(state.clone(), None, r, Boolean::Constant(true
-        ))?;
+        let expected_state = libary_step_sponge(state.clone(), None, r, Boolean::Constant(true))?;
         state = keccak_f_1600(cs.clone(), &state)?;
         for (o, i) in state.iter().zip(expected_state.iter()) {
-            assert_eq!(o.value().unwrap(), i.value().unwrap(), "keccak step mismatch!!");
+            assert_eq!(
+                o.value().unwrap(),
+                i.value().unwrap(),
+                "keccak step mismatch!!"
+            );
         }
         z.extend(truncate(&state, r)?);
-        println!("z size: {}",z.len());
+        // println!("z size: {}",z.len());
     }
 
     z = truncate(&z, d)?;
@@ -304,7 +316,7 @@ pub struct KeccakCircuit<F: PrimeField> {
     pub preimage: Vec<Boolean<F>>, // 512 bools
     pub expected: Vec<u8>,         // 32 bytes == 256 bits
     pub mode: KeccakMode,
-    pub outputsize: usize,         // binary output size
+    pub outputsize: usize, // binary output size
 }
 
 impl<F: PrimeField> ConstraintSynthesizer<F> for KeccakCircuit<F> {
@@ -313,11 +325,37 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for KeccakCircuit<F> {
         let expected: Vec<Boolean<F>> = bytes_to_bitvec::<F>(&self.expected);
         let expected: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "expected", expected)?;
         // println!("Number of public inputs: {} + {}\n", preimage.len(), expected.len());
-        let result: Vec<Boolean<F>> = keccak_gadget(cs.clone(), &preimage, self.mode, self.outputsize)?;
+        let result: Vec<Boolean<F>> =
+            keccak_gadget(cs.clone(), &preimage, self.mode, self.outputsize)?;
+
+        assert_eq!(result.len(), expected.len(), "Output size mismatch!");
 
         for (o, e) in result.iter().zip(expected.iter()) {
             o.enforce_equal(e)?;
         }
+
+        let expected_bytes: Vec<u8> = expected
+            .chunks(8)
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0u8, |acc, (i, b)| acc | ((b.value().unwrap() as u8) << i))
+            })
+            .collect();
+
+        let result_bytes: Vec<u8> = result
+            .chunks(8)
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0u8, |acc, (i, b)| acc | ((b.value().unwrap() as u8) << i))
+            })
+            .collect();
+
+        println!("Expected hash: {:?}", hex::encode(expected_bytes));
+        println!("Actual hash: {:?}", hex::encode(result_bytes));
 
         Ok(())
     }
@@ -330,20 +368,20 @@ mod test {
     use crate::util::{keccak256, sha3_256, shake_128, shake_256};
 
     #[test]
-    fn test_keccak256(){
+    fn test_keccak256() {
         // preimage in vec(any::<u8>(), 0..=256), d in 100_usize..=2176_usize
-        use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
+        use ark_bls12_381::Fr;
+        use ark_relations::r1cs::{ConstraintLayer, ConstraintSystem, TracingMode};
+        use ark_std::rand::Rng;
         use tracing_subscriber::Registry;
         use tracing_subscriber::layer::SubscriberExt;
-        use ark_bls12_381::Fr;
-        use ark_std::rand::Rng;
 
         let mut rng = ark_std::rand::thread_rng();
         let preimage_length = rng.gen_range(1..=256);
         let preimage: Vec<u8> = (0..preimage_length).map(|_| rng.r#gen()).collect();
         let d: usize = rng.gen_range(100..=4032);
 
-        let expected = keccak256(&preimage,d/8);
+        let expected = keccak256(&preimage, d / 8);
 
         let preimage = bytes_to_bitvec::<Fr>(&preimage);
         println!("input length: {} bits", preimage.len());
@@ -369,7 +407,7 @@ mod test {
 
         // let's check whether the constraint system is satisfied
         let is_satisfied = cs.is_satisfied().unwrap();
-        if !is_satisfied{
+        if !is_satisfied {
             // if it isn't, find out the offending constraint.
             println!("Unsatisfied constraint: {:?}\n", cs.which_is_unsatisfied());
         }
@@ -377,22 +415,22 @@ mod test {
     }
 
     #[test]
-    fn test_sha3_256(){
+    fn test_sha3_256() {
         // preimage in vec(any::<u8>(), 0..=256)
-        use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
+        use ark_bls12_381::Fr;
+        use ark_relations::r1cs::{ConstraintLayer, ConstraintSystem, TracingMode};
+        use ark_std::rand::Rng;
         use tracing_subscriber::Registry;
         use tracing_subscriber::layer::SubscriberExt;
-        use ark_bls12_381::Fr;
-        use ark_std::rand::Rng;
 
         let mut rng = ark_std::rand::thread_rng();
         let preimage_length = rng.gen_range(1..=256);
         let preimage: Vec<u8> = (0..preimage_length).map(|_| rng.r#gen()).collect();
         // let d: usize = rng.gen_range(100..=4032);
         let d: usize = 256;
-        
+
         let expected = sha3_256(&preimage);
-        
+
         let preimage = bytes_to_bitvec::<Fr>(&preimage);
         println!("input length: {} bits", preimage.len());
         println!("d: {}", d);
@@ -417,29 +455,28 @@ mod test {
 
         // let's check whether the constraint system is satisfied
         let is_satisfied = cs.is_satisfied().unwrap();
-        if !is_satisfied{
+        if !is_satisfied {
             // if it isn't, find out the offending constraint.
             println!("Unsatisfied constraint: {:?}\n", cs.which_is_unsatisfied());
         }
         assert!(is_satisfied);
-        
     }
 
     #[test]
-    fn test_shake128(){
+    fn test_shake128() {
         // preimage in vec(any::<u8>(), 0..=256), d in 100_usize..=2688_usize
-        use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
+        use ark_bls12_381::Fr;
+        use ark_relations::r1cs::{ConstraintLayer, ConstraintSystem, TracingMode};
+        use ark_std::rand::Rng;
         use tracing_subscriber::Registry;
         use tracing_subscriber::layer::SubscriberExt;
-        use ark_bls12_381::Fr;
-        use ark_std::rand::Rng;
 
         let mut rng = ark_std::rand::thread_rng();
         let preimage_length = rng.gen_range(1..=5);
         let preimage: Vec<u8> = (0..preimage_length).map(|_| rng.r#gen()).collect();
         let d: usize = rng.gen_range(100..=4032);
 
-        let expected = shake_128(&preimage,d/8);
+        let expected = shake_128(&preimage, d / 8);
 
         let preimage = bytes_to_bitvec::<Fr>(&preimage);
         println!("input length: {} bits", preimage.len());
@@ -465,7 +502,7 @@ mod test {
 
         // let's check whether the constraint system is satisfied
         let is_satisfied = cs.is_satisfied().unwrap();
-        if !is_satisfied{
+        if !is_satisfied {
             // if it isn't, find out the offending constraint.
             println!("Unsatisfied constraint: {:?}\n", cs.which_is_unsatisfied());
         }
@@ -473,25 +510,25 @@ mod test {
     }
 
     #[test]
-    fn test_shake256(){
+    fn test_shake256() {
         // preimage in vec(any::<u8>(), 0..=256), d in 100_usize..=2176_usize
-        use ark_relations::r1cs::{ConstraintLayer,ConstraintSystem,TracingMode};
+        use ark_bls12_381::Fr;
+        use ark_relations::r1cs::{ConstraintLayer, ConstraintSystem, TracingMode};
+        use ark_std::rand::Rng;
         use tracing_subscriber::Registry;
         use tracing_subscriber::layer::SubscriberExt;
-        use ark_bls12_381::Fr;
-        use ark_std::rand::Rng;
 
         let mut rng = ark_std::rand::thread_rng();
         let preimage_length = rng.gen_range(1..=256);
         let preimage: Vec<u8> = (0..preimage_length).map(|_| rng.r#gen()).collect();
         let d: usize = rng.gen_range(100..=4032);
 
-        let expected = shake_256(&preimage, d/8);
+        let expected = shake_256(&preimage, d / 8);
 
         let preimage = bytes_to_bitvec::<Fr>(&preimage);
         println!("input length: {} bits", preimage.len());
         println!("d: {}", d);
-        
+
         let circuit = KeccakCircuit {
             // public inputs
             preimage: preimage.clone(),
@@ -512,7 +549,7 @@ mod test {
 
         // let's check whether the constraint system is satisfied
         let is_satisfied = cs.is_satisfied().unwrap();
-        if !is_satisfied{
+        if !is_satisfied {
             // if it isn't, find out the offending constraint.
             println!("Unsatisfied constraint: {:?}\n", cs.which_is_unsatisfied());
         }
