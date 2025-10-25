@@ -1,6 +1,6 @@
 # Arkworks-Keccak
 
-This repository provides R1CS circuits for the Keccak family of hash functions, specifically:
+This repository provides R1CS circuits for the SHA-3 family of hash functions, specifically:
 
 - **SHA3-256**
 - **SHAKE128**
