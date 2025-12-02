@@ -355,8 +355,8 @@ impl<F: PrimeField> ConstraintSynthesizer<F> for KeccakCircuit<F> {
             })
             .collect();
 
-        println!("Expected hash: {:?}", hex::encode(expected_bytes));
-        println!("Actual hash: {:?}", hex::encode(result_bytes));
+        // println!("Expected hash: {:?}", hex::encode(expected_bytes));
+        // println!("Actual hash: {:?}", hex::encode(result_bytes));
 
         Ok(())
     }

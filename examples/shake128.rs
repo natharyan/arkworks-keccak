@@ -59,10 +59,7 @@ fn main() {
     let cs = ConstraintSystem::new_ref();
     circuit.generate_constraints(cs.clone()).unwrap();
 
-    // return the number of constraints (number of rows of the c matrix):
-    let r1cs_matrices = cs.borrow().unwrap().to_matrices().unwrap();
-    let num_constraints = r1cs_matrices.c.len();
-    println!("Number of constraints: {}", num_constraints);
+    println!("\n#Public inputs: {}, #Witnesses: {}, #Constraints: {}\n", cs.num_instance_variables(), cs.num_witness_variables(), cs.num_constraints());
 
     // check whether the constraint system is satisfied
     let is_satisfied = cs.is_satisfied().unwrap();
