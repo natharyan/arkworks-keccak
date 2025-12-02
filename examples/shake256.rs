@@ -9,8 +9,8 @@ fn main() {
     use tracing_subscriber::Registry;
     use tracing_subscriber::layer::SubscriberExt;
 
-    let cmd = Command::new("Shake128 R1CS circuit")
-        .bin_name("shake128")
+    let cmd = Command::new("Shake256 R1CS circuit")
+        .bin_name("shake256")
         .arg(
             Arg::new("input_len_log")
                 .value_name("Log2 of the test input length")

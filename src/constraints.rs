@@ -252,17 +252,17 @@ pub fn ret_r(mode: KeccakMode) -> usize {
 
 pub fn keccak_gadget<F: PrimeField>(
     cs: ConstraintSystemRef<F>,
-    input: &[Boolean<F>],
+    padded: &[Boolean<F>],
     mode: KeccakMode,
     d: usize,
 ) -> Result<Vec<Boolean<F>>, SynthesisError> {
-    assert!(input.len() % 8 == 0);
+    let r: usize = ret_r(mode);
+    assert!(padded.len() % r == 0);
 
     // # Padding
     // M'.len() % r = 0
-    let padded: Vec<Boolean<F>> = pad101(input, mode)?;
+    // let padded: Vec<Boolean<F>> = pad101(input, mode)?;
 
-    let r: usize = ret_r(mode);
 
     // # Absorbing phase
     // Initialization
@@ -321,7 +321,8 @@ pub struct KeccakCircuit<F: PrimeField> {
 
 impl<F: PrimeField> ConstraintSynthesizer<F> for KeccakCircuit<F> {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        let preimage: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "preimage", self.preimage)?;
+        let preimage_padded = pad101(&self.preimage, self.mode)?;
+        let preimage: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "preimage", preimage_padded)?;
         let expected: Vec<Boolean<F>> = bytes_to_bitvec::<F>(&self.expected);
         let expected: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "expected", expected)?;
         // println!("Number of public inputs: {} + {}\n", preimage.len(), expected.len());

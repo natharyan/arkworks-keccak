@@ -29,9 +29,9 @@ impl<F: Field> UInt64Extensions<F> for UInt64<F> {
     }
 
     fn and(&self, other: &UInt64<F>) -> Result<UInt64<F>, SynthesisError> {
-        let xbits = self.to_bits_le();
-        let ybits = other.to_bits_le();
-        let mut x_and_y = Vec::with_capacity(64);
+        let xbits: Vec<Boolean<F>> = self.to_bits_le();
+        let ybits: Vec<Boolean<F>> = other.to_bits_le();
+        let mut x_and_y: Vec<Boolean<F>> = Vec::with_capacity(64);
         for i in 0..64 {
             x_and_y.push(Boolean::and(&xbits[i], &ybits[i])?);
         }
