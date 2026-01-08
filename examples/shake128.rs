@@ -1,4 +1,4 @@
-use ark_relations::r1cs::ConstraintSynthesizer;
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef};
 use arkworks_keccak::constraints::{KeccakCircuit, KeccakMode};
 use arkworks_keccak::util::{bytes_to_bitvec, shake_128};
 use clap::{Arg, Command};
@@ -37,13 +37,15 @@ fn main() {
     let preimage: Vec<u8> = vec![0; input_len];
     let expected = shake_128(&preimage, d / 8);
 
-    let preimage = bytes_to_bitvec::<Fr>(&preimage);
-    println!("Input length: {} bits", preimage.len());
+    let preimage_bits: Vec<bool> = preimage
+                                    .iter()
+                                    .flat_map(|byte| (0..8).map(move |i| (byte >> i) & 1 == 1))
+                                    .collect();
+    println!("Input length: {} bits", preimage_bits.len());
     println!("Output length: {} bits", d);
 
     let circuit = KeccakCircuit {
-        // public inputs
-        preimage: preimage.clone(),
+        preimage: preimage_bits,
         expected: expected.to_vec(),
         mode: KeccakMode::Shake128,
         outputsize: d,
@@ -56,7 +58,7 @@ fn main() {
     let _guard = tracing::subscriber::set_default(subscriber);
 
     // create the circuit
-    let cs = ConstraintSystem::new_ref();
+    let cs: ConstraintSystemRef<Fr> = ConstraintSystem::new_ref();
     circuit.generate_constraints(cs.clone()).unwrap();
 
     println!("\n#Public inputs: {}, #Witnesses: {}, #Constraints: {}\n", cs.num_instance_variables(), cs.num_witness_variables(), cs.num_constraints());
@@ -69,5 +71,5 @@ fn main() {
         assert!(is_satisfied);
     }
 
-    println!("All constraints satisfied!");
+    // println!("All constraints satisfied!");
 }

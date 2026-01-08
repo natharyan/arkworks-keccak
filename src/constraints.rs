@@ -1,6 +1,6 @@
 use crate::util::{bytes_to_bitvec, libary_step_sponge, vec_to_public_input, UInt64Extensions};
 use ark_ff::PrimeField;
-use ark_r1cs_std::{boolean::Boolean, prelude::*, uint64::UInt64};
+use ark_r1cs_std::{boolean::Boolean, fields::fp::FpVar, prelude::*, uint64::UInt64};
 use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_std::vec::Vec;
 
@@ -312,22 +312,29 @@ pub fn keccak_gadget<F: PrimeField>(
     Ok(z)
 }
 
-pub struct KeccakCircuit<F: PrimeField> {
-    pub preimage: Vec<Boolean<F>>, // 512 bools
+pub struct KeccakCircuit {
+    pub preimage: Vec<bool>, // 512 bools
     pub expected: Vec<u8>,         // 32 bytes == 256 bits
     pub mode: KeccakMode,
     pub outputsize: usize, // binary output size
 }
 
-impl<F: PrimeField> ConstraintSynthesizer<F> for KeccakCircuit<F> {
+impl<F: PrimeField> ConstraintSynthesizer<F> for KeccakCircuit {
     fn generate_constraints(self, cs: ConstraintSystemRef<F>) -> Result<(), SynthesisError> {
-        let preimage_padded = pad101(&self.preimage, self.mode)?;
-        let preimage: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "preimage", preimage_padded)?;
+        let preimage_bools: Vec<Boolean<F>> = self.preimage
+            .into_iter()
+            .map(|bit| {
+                Boolean::new_witness(cs.clone(), || Ok(bit))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let preimage_padded = pad101(&preimage_bools, self.mode)?;
+        // let preimage_padded = pad101(&self.preimage, self.mode)?;
+        // let preimage: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "preimage", preimage_padded)?;
         let expected: Vec<Boolean<F>> = bytes_to_bitvec::<F>(&self.expected);
         let expected: Vec<Boolean<F>> = vec_to_public_input(cs.clone(), "expected", expected)?;
         // println!("Number of public inputs: {} + {}\n", preimage.len(), expected.len());
         let result: Vec<Boolean<F>> =
-            keccak_gadget(cs.clone(), &preimage, self.mode, self.outputsize)?;
+            keccak_gadget(cs.clone(), &preimage_padded, self.mode, self.outputsize)?;
 
         assert_eq!(result.len(), expected.len(), "Output size mismatch!");
 
@@ -384,13 +391,15 @@ mod test {
 
         let expected = keccak256(&preimage, d / 8);
 
-        let preimage = bytes_to_bitvec::<Fr>(&preimage);
-        println!("input length: {} bits", preimage.len());
+        let preimage_bits: Vec<bool> = preimage
+                                    .iter()
+                                    .flat_map(|byte| (0..8).map(move |i| (byte >> i) & 1 == 1))
+                                    .collect();
+        println!("input length: {} bits", preimage_bits.len());
         println!("d: {}", d);
 
         let circuit = KeccakCircuit {
-            // public inputs
-            preimage: preimage.clone(),
+            preimage: preimage_bits,
             expected: expected.to_vec(),
             mode: KeccakMode::Keccak256,
             outputsize: d,
@@ -403,7 +412,7 @@ mod test {
         let _guard = tracing::subscriber::set_default(subscriber);
 
         // next, let's make the circuit
-        let cs = ConstraintSystem::new_ref();
+        let cs: ConstraintSystemRef<Fr> = ConstraintSystem::new_ref();
         circuit.generate_constraints(cs.clone()).unwrap();
 
         // let's check whether the constraint system is satisfied
@@ -432,13 +441,15 @@ mod test {
 
         let expected = sha3_256(&preimage);
 
-        let preimage = bytes_to_bitvec::<Fr>(&preimage);
-        println!("input length: {} bits", preimage.len());
+        let preimage_bits: Vec<bool> = preimage
+                                    .iter()
+                                    .flat_map(|byte| (0..8).map(move |i| (byte >> i) & 1 == 1))
+                                    .collect();
+        println!("input length: {} bits", preimage_bits.len());
         println!("d: {}", d);
 
         let circuit = KeccakCircuit {
-            // public inputs
-            preimage: preimage.clone(),
+            preimage: preimage_bits,
             expected: expected.to_vec(),
             mode: KeccakMode::Sha3_256,
             outputsize: 256,
@@ -451,7 +462,7 @@ mod test {
         let _guard = tracing::subscriber::set_default(subscriber);
 
         // next, let's make the circuit
-        let cs = ConstraintSystem::new_ref();
+        let cs: ConstraintSystemRef<Fr> = ConstraintSystem::new_ref();
         circuit.generate_constraints(cs.clone()).unwrap();
 
         // let's check whether the constraint system is satisfied
@@ -479,13 +490,15 @@ mod test {
 
         let expected = shake_128(&preimage, d / 8);
 
-        let preimage = bytes_to_bitvec::<Fr>(&preimage);
-        println!("input length: {} bits", preimage.len());
+        let preimage_bits: Vec<bool> = preimage
+                                    .iter()
+                                    .flat_map(|byte| (0..8).map(move |i| (byte >> i) & 1 == 1))
+                                    .collect();
+        println!("input length: {} bits", preimage_bits.len());
         println!("d: {}", d);
 
         let circuit = KeccakCircuit {
-            // public inputs
-            preimage: preimage.clone(),
+            preimage: preimage_bits,
             expected: expected.to_vec(),
             mode: KeccakMode::Shake128,
             outputsize: d,
@@ -498,7 +511,7 @@ mod test {
         let _guard = tracing::subscriber::set_default(subscriber);
 
         // next, let's make the circuit
-        let cs = ConstraintSystem::new_ref();
+        let cs: ConstraintSystemRef<Fr> = ConstraintSystem::new_ref();
         circuit.generate_constraints(cs.clone()).unwrap();
 
         // let's check whether the constraint system is satisfied
@@ -526,13 +539,15 @@ mod test {
 
         let expected = shake_256(&preimage, d / 8);
 
-        let preimage = bytes_to_bitvec::<Fr>(&preimage);
-        println!("input length: {} bits", preimage.len());
+        let preimage_bits: Vec<bool> = preimage
+                                    .iter()
+                                    .flat_map(|byte| (0..8).map(move |i| (byte >> i) & 1 == 1))
+                                    .collect();
+        println!("input length: {} bits", preimage_bits.len());
         println!("d: {}", d);
 
         let circuit = KeccakCircuit {
-            // public inputs
-            preimage: preimage.clone(),
+            preimage: preimage_bits,
             expected: expected.to_vec(),
             mode: KeccakMode::Shake256,
             outputsize: d,
@@ -545,7 +560,7 @@ mod test {
         let _guard = tracing::subscriber::set_default(subscriber);
 
         // next, let's make the circuit
-        let cs = ConstraintSystem::new_ref();
+        let cs:ConstraintSystemRef<Fr>  = ConstraintSystem::new_ref();
         circuit.generate_constraints(cs.clone()).unwrap();
 
         // let's check whether the constraint system is satisfied

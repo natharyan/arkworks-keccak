@@ -1,4 +1,4 @@
-use ark_relations::r1cs::ConstraintSynthesizer;
+use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef};
 use arkworks_keccak::constraints::{KeccakCircuit, KeccakMode};
 use arkworks_keccak::util::{bytes_to_bitvec, sha3_256};
 use clap::{Arg, Command};
@@ -9,8 +9,8 @@ fn main() {
     use tracing_subscriber::Registry;
     use tracing_subscriber::layer::SubscriberExt;
 
-    let cmd = Command::new("Shake128 R1CS circuit")
-        .bin_name("shake128")
+    let cmd = Command::new("SHA3-256 R1CS circuit")
+        .bin_name("sha3_256")
         .arg(
             Arg::new("input_len_log")
                 .value_name("Log2 of the test input length")
@@ -18,31 +18,25 @@ fn main() {
                 .value_parser(clap::value_parser!(usize))
                 .long_help("Base 2 log of the test input length. For example, the value of 8 corresponds to 256 bytes of input."),
         )
-        .arg(
-            Arg::new("output_bytesize")
-                .value_name("Log2 of the output bytesize")
-                .default_value("5")
-                .value_parser(clap::value_parser!(usize))
-                .long_help("Base 2 log of the output bytesize. For example, the value of 5 corresponds to 32 bytes of output."),
-        )
         .after_help("This command instantiates an R1CS circuit that checks that the hash of 2^(input_log_len) zero bytes matches the expected output.");
 
     let m = cmd.get_matches();
     let log_input_len = *m.get_one::<usize>("input_len_log").unwrap();
     let input_len = 1 << log_input_len;
-    let d = 256;
 
     // generate preimage and expected output
     let preimage: Vec<u8> = vec![0; input_len];
     let expected = sha3_256(&preimage);
 
-    let preimage = bytes_to_bitvec::<Fr>(&preimage);
-    println!("Input length: {} bits", preimage.len());
-    println!("Output length: {} bits", d);
+    let preimage_bits: Vec<bool> = preimage
+                                    .iter()
+                                    .flat_map(|byte| (0..8).map(move |i| (byte >> i) & 1 == 1))
+                                    .collect();
+    println!("Input length: {} bits", preimage_bits.len());
+    println!("Output length: 256 bits");
 
     let circuit = KeccakCircuit {
-        // public inputs
-        preimage: preimage.clone(),
+        preimage: preimage_bits,
         expected: expected.to_vec(),
         mode: KeccakMode::Sha3_256,
         outputsize: 256,
@@ -55,9 +49,8 @@ fn main() {
     let _guard = tracing::subscriber::set_default(subscriber);
 
     // create the circuit
-    let cs = ConstraintSystem::new_ref();
+    let cs: ConstraintSystemRef<Fr> = ConstraintSystem::new_ref();
     circuit.generate_constraints(cs.clone()).unwrap();
-
 
     println!("\n#Public inputs: {}, #Witnesses: {}, #Constraints: {}\n", cs.num_instance_variables(), cs.num_witness_variables(), cs.num_constraints());
 
@@ -69,5 +62,5 @@ fn main() {
         assert!(is_satisfied);
     }
 
-    println!("All constraints satisfied!");
+    // println!("All constraints satisfied!");
 }

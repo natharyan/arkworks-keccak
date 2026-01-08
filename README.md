@@ -16,22 +16,41 @@ The directory structure is as follows:
 
 ## Running the examples
 
-Run the following commands:
+Run the following commands with `sha3_256`:
+
+```bash
+cargo build --release
+cargo run -r --example sha3_256 6 100
+```
+Output:
+
+```
+Input length: 512 bits
+Output length: 256 bits
+
+#Public inputs: 257, #Witnesses: 151936, #Constraints: 152448
+```
+
+and the following with `shake128` or `shake256`:
 
 ```bash
 cargo build --release
 cargo run -r --example shake128 6 100
 ```
 
-In the above case, the input message will be $2^6$ zero bytes and output size will be of size 100 bytes. The output will look like the following:
+Output:
 
 ```
 Input length: 512 bits
 Output length: 800 bits
-Expected hash: "fc37fe19d48ad68ba1f793aa126f5f14178a89b6dfb87443ef655b9819c52121bb164c3728cb96d54ffec73497d99cc6a1d85975bd264aab5924246e0b5cd026a743f75bc822b558cb1f6a8e151e4b1b7ecf3c2a64739895246a0a2e638c21c66c13ba60"
-Actual hash: "fc37fe19d48ad68ba1f793aa126f5f14178a89b6dfb87443ef655b9819c52121bb164c3728cb96d54ffec73497d99cc6a1d85975bd264aab5924246e0b5cd026a743f75bc822b558cb1f6a8e151e4b1b7ecf3c2a64739895246a0a2e638c21c66c13ba60"
-Number of constraints: 153536
-All constraints satisfied!
+
+#Public inputs: 801, #Witnesses: 151936, #Constraints: 153536
+```
+
+Run for all three hash functions with
+
+```bash
+cargo run --example constraint_counts --release
 ```
 
 ## License
