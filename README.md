@@ -6,6 +6,8 @@ This repository provides R1CS circuits for the SHA-3 family of hash functions, s
 - **SHAKE128**
 - **SHAKE256**
 
+and implementation of the UInt64 gadget for keccak operations.
+
 ## Directory overview
 
 The directory structure is as follows:
